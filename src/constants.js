@@ -54,5 +54,6 @@ export const ALT_STATUS_TO_CANONICAL = Object.freeze({
 export const DEFAULT_SETTINGS = {
   uiLocale: 'auto',
   importDelayMs: 800,
+  importFormat: 'json',
   debugMode: false,
 };

@@ -5,7 +5,8 @@ import { createExampleTransferDocument } from '../format/example.js';
 import { parseTransferDocument } from '../format/parse.js';
 import { serializeTransferDocument, transferFilename } from '../format/serialize.js';
 import { fmt } from '../i18n/index.js';
-import { settings, t } from '../state.js';
+import { saveSettings } from '../settings.js';
+import { reloadRuntimeSettings, settings, t } from '../state.js';
 import { downloadBlob, readFileAsText } from '../utils/download.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
 import { showToast } from './toast.js';
@@ -17,6 +18,8 @@ export const NAV_BTN_ID = 'bdt-nav-transfer';
 let loadedDoc = null;
 /** @type {File | null} */
 let pendingFile = null;
+/** @type {'json' | 'csv'} */
+let importFormat = 'json';
 /** @type {string | null} */
 let prevHtmlOverflow = null;
 
@@ -91,6 +94,104 @@ function resetAnalysisUi(root) {
   }
 }
 
+function formatAccept(format) {
+  return format === 'csv' ? '.csv,text/csv' : '.json,application/json';
+}
+
+function clearPendingFile(root) {
+  pendingFile = null;
+  const input = root.querySelector('[data-bdt-file]');
+  if (input) input.value = '';
+  updateDropzoneUi(root);
+  resetAnalysisUi(root);
+  syncActionButtons(root);
+}
+
+function syncActionButtons(root) {
+  const analyzeBtn = root.querySelector('[data-bdt-analyze]');
+  const exampleBtn = root.querySelector('[data-bdt-example]');
+  const csvStub = root.querySelector('[data-bdt-csv-stub]');
+  const isCsv = importFormat === 'csv';
+
+  if (csvStub) csvStub.hidden = !isCsv;
+  if (exampleBtn) exampleBtn.hidden = isCsv;
+  if (analyzeBtn) {
+    analyzeBtn.disabled = isCsv || !pendingFile;
+  }
+}
+
+function updateDropzoneUi(root) {
+  const zone = root.querySelector('[data-bdt-dropzone]');
+  const empty = root.querySelector('[data-bdt-drop-empty]');
+  const filled = root.querySelector('[data-bdt-drop-filled]');
+  const nameEl = root.querySelector('[data-bdt-file-name]');
+  const metaEl = root.querySelector('[data-bdt-drop-meta]');
+  const hintEl = root.querySelector('[data-bdt-format-hint]');
+
+  if (metaEl) {
+    metaEl.textContent = importFormat === 'csv' ? t.importDropCsv : t.importDropJson;
+  }
+  if (hintEl) {
+    hintEl.textContent =
+      importFormat === 'csv' ? t.importFormatCsvHint : t.importFormatJsonHint;
+  }
+
+  if (!zone || !empty || !filled) return;
+
+  if (pendingFile) {
+    zone.classList.add('has-file');
+    empty.hidden = true;
+    filled.hidden = false;
+    if (nameEl) nameEl.textContent = pendingFile.name;
+  } else {
+    zone.classList.remove('has-file');
+    empty.hidden = false;
+    filled.hidden = true;
+    if (nameEl) nameEl.textContent = '';
+  }
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {'json' | 'csv'} format
+ */
+function setImportFormat(root, format) {
+  importFormat = format === 'csv' ? 'csv' : 'json';
+  saveSettings({ ...settings, importFormat });
+  reloadRuntimeSettings();
+
+  root.querySelectorAll('[data-bdt-format]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.getAttribute('data-bdt-format') === importFormat);
+  });
+
+  const input = root.querySelector('[data-bdt-file]');
+  if (input) input.accept = formatAccept(importFormat);
+
+  clearPendingFile(root);
+}
+
+function applySelectedFile(root, file) {
+  if (!file) {
+    clearPendingFile(root);
+    return;
+  }
+
+  const name = String(file.name || '').toLowerCase();
+  if (importFormat === 'json' && !name.endsWith('.json')) {
+    showToast(t.importDropJson, { type: 'warning' });
+    return;
+  }
+  if (importFormat === 'csv' && !name.endsWith('.csv')) {
+    showToast(t.importDropCsv, { type: 'warning' });
+    return;
+  }
+
+  pendingFile = file;
+  resetAnalysisUi(root);
+  updateDropzoneUi(root);
+  syncActionButtons(root);
+}
+
 /**
  * @param {HTMLElement} root
  * @param {import('../format/analyze.js').TransferAnalysis} analysis
@@ -104,9 +205,7 @@ function renderSummary(root, analysis) {
     : analysis.platform;
 
   const newText =
-    analysis.newCount == null
-      ? t.importStatPending
-      : String(analysis.newCount);
+    analysis.newCount == null ? t.importStatPending : String(analysis.newCount);
   const existingText =
     analysis.existingCount == null
       ? t.importStatPending
@@ -148,8 +247,10 @@ function renderSummary(root, analysis) {
 
 export function openPanel(tab = 'import') {
   closePanel();
+  reloadRuntimeSettings();
   pendingFile = null;
   loadedDoc = null;
+  importFormat = settings.importFormat === 'csv' ? 'csv' : 'json';
 
   const backdrop = document.createElement('div');
   backdrop.id = PANEL_ID;
@@ -170,11 +271,37 @@ export function openPanel(tab = 'import') {
       <div class="bdt-panel__body">
         <section class="bdt-tab-panel" data-bdt-panel="import" hidden>
           <p class="bdt-muted">${escapeHtml(t.importHint)}</p>
-          <label class="bdt-file">
-            <span>${escapeHtml(t.importPickJson)}</span>
-            <input type="file" accept=".json,application/json" data-bdt-json />
-          </label>
-          <p class="bdt-file-name" data-bdt-json-name></p>
+
+          <div class="bdt-field">
+            <p class="bdt-field__label">${escapeHtml(t.importFormatLabel)}</p>
+            <div class="bdt-segment" role="radiogroup" aria-label="${escapeAttr(t.importFormatLabel)}">
+              <button type="button" class="bdt-segment__btn" data-bdt-format="json" role="radio">${escapeHtml(t.importFormatJson)}</button>
+              <button type="button" class="bdt-segment__btn" data-bdt-format="csv" role="radio">${escapeHtml(t.importFormatCsv)}</button>
+            </div>
+            <p class="bdt-muted bdt-field__hint" data-bdt-format-hint></p>
+          </div>
+
+          <div class="bdt-dropzone" data-bdt-dropzone>
+            <input type="file" class="bdt-dropzone__input" accept="${escapeAttr(formatAccept(importFormat))}" data-bdt-file />
+            <div class="bdt-dropzone__empty" data-bdt-drop-empty>
+              <div class="bdt-dropzone__icon" aria-hidden="true">
+                <i class="fa-solid fa-layer-group"></i>
+              </div>
+              <p class="bdt-dropzone__title">${escapeHtml(t.importDropTitle)}</p>
+              <p class="bdt-dropzone__meta" data-bdt-drop-meta></p>
+              <span class="bdt-dropzone__browse">${escapeHtml(t.importDropBrowse)}</span>
+            </div>
+            <div class="bdt-dropzone__filled" data-bdt-drop-filled hidden>
+              <div class="bdt-dropzone__file">
+                <span class="bdt-dropzone__badge">${escapeHtml(t.importDropSelected)}</span>
+                <strong class="bdt-dropzone__name" data-bdt-file-name></strong>
+              </div>
+              <button type="button" class="bdt-btn bdt-btn--ghost bdt-btn--sm" data-bdt-clear>${escapeHtml(t.importDropClear)}</button>
+            </div>
+          </div>
+
+          <p class="bdt-muted bdt-stub" data-bdt-csv-stub hidden>${escapeHtml(t.importCsvStub)}</p>
+
           <div class="bdt-actions">
             <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-analyze disabled>${escapeHtml(t.importAnalyze)}</button>
             <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-example>${escapeHtml(t.importDownloadExample)}</button>
@@ -210,18 +337,51 @@ export function openPanel(tab = 'import') {
     btn.addEventListener('click', () => selectTab(backdrop, btn.getAttribute('data-bdt-tab')));
   });
 
-  const analyzeBtn = backdrop.querySelector('[data-bdt-analyze]');
-  const jsonInput = backdrop.querySelector('[data-bdt-json]');
-
-  jsonInput?.addEventListener('change', () => {
-    pendingFile = jsonInput.files?.[0] || null;
-    const nameEl = backdrop.querySelector('[data-bdt-json-name]');
-    if (nameEl) nameEl.textContent = pendingFile ? pendingFile.name : '';
-    resetAnalysisUi(backdrop);
-    if (analyzeBtn) analyzeBtn.disabled = !pendingFile;
+  backdrop.querySelectorAll('[data-bdt-format]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setImportFormat(backdrop, btn.getAttribute('data-bdt-format') === 'csv' ? 'csv' : 'json');
+    });
   });
 
+  const fileInput = backdrop.querySelector('[data-bdt-file]');
+  const dropzone = backdrop.querySelector('[data-bdt-dropzone]');
+
+  fileInput?.addEventListener('change', () => {
+    applySelectedFile(backdrop, fileInput.files?.[0] || null);
+  });
+
+  dropzone?.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('is-dragover');
+  });
+  dropzone?.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('is-dragover');
+  });
+  dropzone?.addEventListener('dragleave', (e) => {
+    if (!dropzone.contains(e.relatedTarget)) {
+      dropzone.classList.remove('is-dragover');
+    }
+  });
+  dropzone?.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('is-dragover');
+    const file = e.dataTransfer?.files?.[0] || null;
+    applySelectedFile(backdrop, file);
+  });
+
+  backdrop.querySelector('[data-bdt-clear]')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearPendingFile(backdrop);
+  });
+
+  const analyzeBtn = backdrop.querySelector('[data-bdt-analyze]');
   analyzeBtn?.addEventListener('click', async () => {
+    if (importFormat === 'csv') {
+      showToast(t.importCsvStub, { type: 'warning' });
+      return;
+    }
     if (!pendingFile) {
       showToast(t.importNeedFile, { type: 'warning' });
       return;
@@ -249,7 +409,7 @@ export function openPanel(tab = 'import') {
       resetAnalysisUi(backdrop);
       showToast(err instanceof Error ? err.message : String(err), { type: 'error' });
     } finally {
-      if (analyzeBtn) analyzeBtn.disabled = !pendingFile;
+      syncActionButtons(backdrop);
     }
   });
 
@@ -299,6 +459,13 @@ export function openPanel(tab = 'import') {
     downloadBlob(filename, serializeTransferDocument(doc));
     showToast(fmt(t.importExampleDownloaded, { filename }), { type: 'success' });
   });
+
+  // Apply initial format UI without clearing twice
+  backdrop.querySelectorAll('[data-bdt-format]').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.getAttribute('data-bdt-format') === importFormat);
+  });
+  updateDropzoneUi(backdrop);
+  syncActionButtons(backdrop);
 
   selectTab(backdrop, tab);
 }

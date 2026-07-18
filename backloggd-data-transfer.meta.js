@@ -25,6 +25,7 @@
 // @grant           GM_addStyle
 // @grant           GM_getValue
 // @grant           GM_registerMenuCommand
+// @grant           GM_setValue
 // @run-at          document-idle
 // @noframes
 // ==/UserScript==

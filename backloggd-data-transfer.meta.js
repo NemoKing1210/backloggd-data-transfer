@@ -2,7 +2,7 @@
 // @name            Backloggd Data Transfer
 // @name:ru         Backloggd Data Transfer
 // @namespace       https://github.com/NemoKing1210/backloggd-data-transfer
-// @version         0.6.2
+// @version         0.6.4
 // @author          NemoKing1210
 // @description     Import game logs into Backloggd from other platforms via a unified transfer file
 // @description:ru  Импорт игровых логов в Backloggd из других площадок через единый transfer-файл

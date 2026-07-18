@@ -29,8 +29,10 @@ export const GAME_CACHE_MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 export const HISTORY_MAX_ENTRIES = 50;
 export const ROOT_ATTR = 'data-bdt-root';
 export const SCAN_DEBOUNCE_MS = 400;
-/** Base delay between Backloggd autocomplete lookups during Read/match. */
-export const MATCH_DELAY_MS = 450;
+/** Base delay after each network autocomplete lookup (per worker). */
+export const MATCH_DELAY_MS = 280;
+/** How many match lookups run in parallel during Read. */
+export const MATCH_CONCURRENCY = 4;
 /** Base delay between library page fetches. */
 export const LIBRARY_PAGE_DELAY_MS = 280;
 

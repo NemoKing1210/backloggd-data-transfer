@@ -1,10 +1,11 @@
-import { MATCH_DELAY_MS } from '../../constants.js';
+import { MATCH_CONCURRENCY, MATCH_DELAY_MS } from '../../constants.js';
 import {
   getCachedGameMatch,
   setCachedGameMatch,
 } from '../../cache/games.js';
 import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
+import { mapPool } from '../../utils/pool.js';
 import { libraryHasGame, probeUserHasLog } from './library.js';
 import { searchBackloggdGame } from './search.js';
 import { backloggdUrl } from './site.js';
@@ -26,14 +27,27 @@ import { getCurrentUsername } from './user.js';
  */
 
 /**
+ * @typedef {object} MatchProgressInfo
+ * @property {number} index
+ * @property {number} total
+ * @property {number} done
+ * @property {import('../../format/schema.js').TransferEntry} entry
+ * @property {EntryMatchResult} [result]
+ * @property {string[]} activeTitles
+ * @property {number} concurrency
+ */
+
+/**
  * Match each transfer entry against Backloggd autocomplete.
  * Uses the game cache when possible; mutates `entry.game_id` / `entry.slug` on hit.
+ * Runs several lookups in parallel (see `MATCH_CONCURRENCY`).
  *
  * @param {import('../../format/schema.js').TransferDocument} doc
  * @param {{
  *   delayMs?: number,
+ *   concurrency?: number,
  *   library?: import('./library.js').UserLibraryIndex | null,
- *   onProgress?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry, result: EntryMatchResult }) => void,
+ *   onProgress?: (info: MatchProgressInfo) => void,
  *   shouldCancel?: () => boolean,
  * }} [options]
  * @returns {Promise<{ results: EntryMatchResult[], foundCount: number, notFoundCount: number, presetCount: number, errorCount: number, existingCount: number, cacheHitCount: number }>}
@@ -44,155 +58,112 @@ export async function matchTransferEntries(doc, options = {}) {
   const delayMs = Number.isFinite(options.delayMs)
     ? Math.max(0, options.delayMs)
     : MATCH_DELAY_MS;
+  const concurrency = Math.max(
+    1,
+    Math.floor(
+      Number.isFinite(options.concurrency)
+        ? Number(options.concurrency)
+        : MATCH_CONCURRENCY,
+    ),
+  );
   const library = options.library || null;
   const username = getCurrentUsername();
-  /** @type {EntryMatchResult[]} */
-  const results = [];
   let cacheHitCount = 0;
+  let done = 0;
+  /** @type {Map<number, string>} */
+  const activeByIndex = new Map();
 
-  for (let index = 0; index < total; index += 1) {
-    if (options.shouldCancel?.()) break;
-
-    const entry = entries[index];
-    /** @type {EntryMatchResult} */
-    let result;
-    let usedNetwork = false;
-
-    if (entry.game_id != null) {
-      result = {
+  const settled = await mapPool(
+    total,
+    concurrency,
+    async (index) => {
+      const entry = entries[index];
+      const title = entryDisplayTitle(entry);
+      activeByIndex.set(index, title || `#${index + 1}`);
+      options.onProgress?.({
         index,
+        total,
+        done,
         entry,
-        status: 'preset',
-        match: {
-          id: entry.game_id,
-          slug: entry.slug || '',
-          title: entryDisplayTitle(entry),
-          year: '',
-          score: 100,
-          url: entry.slug
-            ? backloggdUrl(`/games/${encodeURIComponent(entry.slug)}/`)
-            : '',
-        },
-        existingLog: false,
-        fromCache: false,
-      };
-      // Keep cache warm for title lookups too.
-      const title = entryDisplayTitle(entry);
-      if (title) {
-        setCachedGameMatch(title, {
-          id: entry.game_id,
-          slug: entry.slug || '',
-          title,
-          year: '',
-          score: 100,
-          url: result.match.url || '',
-        });
-      }
-    } else {
-      const title = entryDisplayTitle(entry);
-      const cached = getCachedGameMatch(title);
-
-      if (cached) {
-        cacheHitCount += 1;
-        if (cached.kind === 'hit' && cached.match?.id != null) {
-          entry.game_id = cached.match.id;
-          if (cached.match.slug) entry.slug = cached.match.slug;
-          result = {
-            index,
-            entry,
-            status: 'found',
-            match: {
-              id: cached.match.id,
-              slug: cached.match.slug || '',
-              title: cached.match.title || title,
-              year: cached.match.year || '',
-              score: cached.match.score ?? 100,
-              url:
-                cached.match.url ||
-                (cached.match.slug
-                  ? backloggdUrl(`/games/${encodeURIComponent(cached.match.slug)}/`)
-                  : ''),
-            },
-            existingLog: false,
-            fromCache: true,
-          };
-        } else {
-          result = {
-            index,
-            entry,
-            status: 'not_found',
-            match: null,
-            existingLog: false,
-            fromCache: true,
-          };
-        }
-      } else {
-        usedNetwork = true;
-        try {
-          const match = await searchBackloggdGame(title);
-          setCachedGameMatch(title, match);
-          if (match) {
-            entry.game_id = match.id;
-            if (match.slug) entry.slug = match.slug;
-            result = {
-              index,
-              entry,
-              status: 'found',
-              match,
-              existingLog: false,
-              fromCache: false,
-            };
-          } else {
-            result = {
-              index,
-              entry,
-              status: 'not_found',
-              match: null,
-              existingLog: false,
-              fromCache: false,
-            };
-          }
-        } catch (err) {
-          result = {
-            index,
-            entry,
-            status: 'error',
-            match: null,
-            existingLog: false,
-            fromCache: false,
-            error: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-    }
-
-    if (
-      (result.status === 'found' || result.status === 'preset') &&
-      (result.match?.id != null || entry.game_id != null)
-    ) {
-      const gameId = result.match?.id ?? entry.game_id;
-      const slug = result.match?.slug || entry.slug || '';
-      const existing = await resolveExistingLog({
-        gameId,
-        slug,
-        library,
-        username,
+        activeTitles: [...activeByIndex.values()],
+        concurrency,
       });
-      result.existingLog = existing;
-      if (existing && library) {
-        if (gameId != null) library.gameIds.add(Number(gameId));
-        if (slug) library.slugs.add(String(slug).toLowerCase());
+
+      /** @type {EntryMatchResult} */
+      let result;
+      let usedNetwork = false;
+
+      try {
+        if (entry.game_id != null) {
+          result = buildPresetResult(index, entry, title);
+          if (title) {
+            setCachedGameMatch(title, {
+              id: entry.game_id,
+              slug: entry.slug || '',
+              title,
+              year: '',
+              score: 100,
+              url: result.match?.url || '',
+            });
+          }
+        } else {
+          const cached = getCachedGameMatch(title);
+          if (cached) {
+            cacheHitCount += 1;
+            result = buildCachedResult(index, entry, title, cached);
+          } else {
+            usedNetwork = true;
+            result = await lookupNetwork(index, entry, title);
+          }
+        }
+
+        if (
+          (result.status === 'found' || result.status === 'preset') &&
+          (result.match?.id != null || entry.game_id != null)
+        ) {
+          const gameId = result.match?.id ?? entry.game_id;
+          const slug = result.match?.slug || entry.slug || '';
+          const existing = await resolveExistingLog({
+            gameId,
+            slug,
+            library,
+            username,
+          });
+          result.existingLog = existing;
+          if (existing && library) {
+            if (gameId != null) library.gameIds.add(Number(gameId));
+            if (slug) library.slugs.add(String(slug).toLowerCase());
+          }
+        }
+      } finally {
+        activeByIndex.delete(index);
       }
-    }
 
-    results.push(result);
-    options.onProgress?.({ index, total, entry, result });
+      done += 1;
+      options.onProgress?.({
+        index,
+        total,
+        done,
+        entry,
+        result,
+        activeTitles: [...activeByIndex.values()],
+        concurrency,
+      });
 
-    // Skip delay for cache/preset hits — only throttle real network lookups.
-    if (delayMs && index < total - 1 && usedNetwork) {
-      await sleepJitter(delayMs);
-    }
-  }
+      // Throttle per worker after real network lookups (cache/preset skip delay).
+      if (delayMs && usedNetwork && !options.shouldCancel?.()) {
+        await sleepJitter(delayMs);
+      }
+
+      return result;
+    },
+    { shouldCancel: options.shouldCancel },
+  );
+
+  /** @type {EntryMatchResult[]} */
+  const results = settled
+    .filter((r) => r != null)
+    .sort((a, b) => a.index - b.index);
 
   return {
     results,
@@ -204,6 +175,116 @@ export async function matchTransferEntries(doc, options = {}) {
     existingCount: results.filter((r) => r.existingLog).length,
     cacheHitCount,
   };
+}
+
+/**
+ * @param {number} index
+ * @param {import('../../format/schema.js').TransferEntry} entry
+ * @param {string} title
+ * @returns {EntryMatchResult}
+ */
+function buildPresetResult(index, entry, title) {
+  return {
+    index,
+    entry,
+    status: 'preset',
+    match: {
+      id: entry.game_id,
+      slug: entry.slug || '',
+      title: title || entryDisplayTitle(entry),
+      year: '',
+      score: 100,
+      url: entry.slug
+        ? backloggdUrl(`/games/${encodeURIComponent(entry.slug)}/`)
+        : '',
+    },
+    existingLog: false,
+    fromCache: false,
+  };
+}
+
+/**
+ * @param {number} index
+ * @param {import('../../format/schema.js').TransferEntry} entry
+ * @param {string} title
+ * @param {import('../../cache/games.js').GameCacheEntry} cached
+ * @returns {EntryMatchResult}
+ */
+function buildCachedResult(index, entry, title, cached) {
+  if (cached.kind === 'hit' && cached.match?.id != null) {
+    entry.game_id = cached.match.id;
+    if (cached.match.slug) entry.slug = cached.match.slug;
+    return {
+      index,
+      entry,
+      status: 'found',
+      match: {
+        id: cached.match.id,
+        slug: cached.match.slug || '',
+        title: cached.match.title || title,
+        year: cached.match.year || '',
+        score: cached.match.score ?? 100,
+        url:
+          cached.match.url ||
+          (cached.match.slug
+            ? backloggdUrl(`/games/${encodeURIComponent(cached.match.slug)}/`)
+            : ''),
+      },
+      existingLog: false,
+      fromCache: true,
+    };
+  }
+  return {
+    index,
+    entry,
+    status: 'not_found',
+    match: null,
+    existingLog: false,
+    fromCache: true,
+  };
+}
+
+/**
+ * @param {number} index
+ * @param {import('../../format/schema.js').TransferEntry} entry
+ * @param {string} title
+ * @returns {Promise<EntryMatchResult>}
+ */
+async function lookupNetwork(index, entry, title) {
+  try {
+    const match = await searchBackloggdGame(title);
+    setCachedGameMatch(title, match);
+    if (match) {
+      entry.game_id = match.id;
+      if (match.slug) entry.slug = match.slug;
+      return {
+        index,
+        entry,
+        status: 'found',
+        match,
+        existingLog: false,
+        fromCache: false,
+      };
+    }
+    return {
+      index,
+      entry,
+      status: 'not_found',
+      match: null,
+      existingLog: false,
+      fromCache: false,
+    };
+  } catch (err) {
+    return {
+      index,
+      entry,
+      status: 'error',
+      match: null,
+      existingLog: false,
+      fromCache: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 /**

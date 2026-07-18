@@ -1412,6 +1412,43 @@ a.bdt-btn--ghost:hover {
   will-change: width;
 }
 
+.bdt-progress__active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 0;
+}
+
+.bdt-progress__active[hidden] {
+  display: none;
+}
+
+.bdt-progress__chip {
+  max-width: 11rem;
+  padding: 0.18rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 184, 154, 0.28);
+  background: rgba(61, 184, 154, 0.12);
+  color: var(--bdt-text);
+  font-size: 0.72rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: bdt-chip-in 0.28s ease-out;
+}
+
+@keyframes bdt-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .bdt-match-wrap {
   display: grid;
   gap: 0.65rem;
@@ -1442,6 +1479,34 @@ a.bdt-btn--ghost:hover {
   flex-wrap: wrap;
   gap: 0.55rem 0.75rem;
   align-items: flex-end;
+}
+
+.bdt-match-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--bdt-border);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--bdt-muted);
+}
+
+.bdt-match-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--bdt-text);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.bdt-match-search input::placeholder {
+  color: var(--bdt-muted);
 }
 
 .bdt-match-filter {
@@ -1934,8 +1999,8 @@ a.bdt-btn--ghost:hover {
 
 .bdt-toast-host {
   position: fixed;
+  top: 18px;
   right: 18px;
-  bottom: 18px;
   z-index: 2147483002;
   display: flex;
   flex-direction: column;
@@ -1960,7 +2025,7 @@ a.bdt-btn--ghost:hover {
   border-left-width: 3px;
   box-shadow: var(--bdt-shadow);
   opacity: 0;
-  transform: translateY(10px) scale(0.98);
+  transform: translateY(-10px) scale(0.98);
   transition: opacity 0.22s ease, transform 0.22s ease;
   font-family: var(--bdt-font);
   cursor: pointer;
@@ -1973,7 +2038,7 @@ a.bdt-btn--ghost:hover {
 
 .bdt-toast.is-leaving {
   opacity: 0;
-  transform: translateY(8px) scale(0.98);
+  transform: translateY(-8px) scale(0.98);
 }
 
 .bdt-toast__icon {

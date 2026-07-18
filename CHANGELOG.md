@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-07-18
+
+### Changed
+
+- Toasts appear in the top-right corner.
+
+## [0.6.3] - 2026-07-18
+
+### Added
+
+- Match results table: search by file title or Backloggd title.
+- Parallel matching (4 concurrent lookups) with live in-flight title chips on the progress bar.
+
+### Changed
+
+- Match stage progress shows parallel activity instead of a single sequential title.
+
 ## [0.6.2] - 2026-07-18
 
 ### Changed

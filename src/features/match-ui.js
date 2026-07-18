@@ -26,6 +26,10 @@ export function renderMatchTable(root, results, options = {}) {
   }
 
   const importExisting = options.importExisting === true;
+  const prevSearch =
+    /** @type {HTMLInputElement | null} */ (
+      wrap.querySelector('[data-bdt-match-search]')
+    )?.value || '';
 
   const rows = results
     .map((row) => {
@@ -71,6 +75,8 @@ export function renderMatchTable(root, results, options = {}) {
           data-importable="${importable ? '1' : '0'}"
           data-status="${escapeAttr(row.status)}"
           data-source="${row.fromCache ? 'cache' : 'live'}"
+          data-title="${escapeAttr(title.toLowerCase())}"
+          data-site-title="${escapeAttr(String(matchedTitle).toLowerCase())}"
         >
           <td class="bdt-match-col-check">
             <input
@@ -121,6 +127,16 @@ export function renderMatchTable(root, results, options = {}) {
       </label>
     </div>
     <div class="bdt-match-filters" role="group" aria-label="${escapeAttr(t.importMatchFiltersLabel)}">
+      <label class="bdt-match-search">
+        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+        <input
+          type="search"
+          data-bdt-match-search
+          placeholder="${escapeAttr(t.importMatchSearchPlaceholder)}"
+          aria-label="${escapeAttr(t.importMatchSearchPlaceholder)}"
+          value="${escapeAttr(prevSearch)}"
+        />
+      </label>
       ${filterSelect(
         'existing',
         t.importMatchFilterExisting,
@@ -397,6 +413,14 @@ function bindMatchSelection(wrap, options) {
     applyMatchFilters(wrap);
     syncMatchSelectionUi(wrap, options.onSelectionChange);
   });
+
+  wrap.addEventListener('input', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!target.matches('[data-bdt-match-search]')) return;
+    applyMatchFilters(wrap);
+    syncMatchSelectionUi(wrap, options.onSelectionChange);
+  });
 }
 
 /**
@@ -407,6 +431,7 @@ function applyMatchFilters(wrap) {
   const status = filterValue(wrap, 'status');
   const source = filterValue(wrap, 'source');
   const selected = filterValue(wrap, 'selected');
+  const query = searchQuery(wrap);
 
   for (const row of wrap.querySelectorAll('tbody tr')) {
     const el = /** @type {HTMLTableRowElement} */ (row);
@@ -426,8 +451,30 @@ function applyMatchFilters(wrap) {
       selected === 'all' ||
       (selected === 'on' && isChecked) ||
       (selected === 'off' && !isChecked);
-    el.hidden = !(matchExisting && matchStatus && matchSource && matchSelected);
+    const matchQuery =
+      !query ||
+      (el.getAttribute('data-title') || '').includes(query) ||
+      (el.getAttribute('data-site-title') || '').includes(query);
+    el.hidden = !(
+      matchExisting &&
+      matchStatus &&
+      matchSource &&
+      matchSelected &&
+      matchQuery
+    );
   }
+}
+
+/**
+ * @param {HTMLElement} wrap
+ */
+function searchQuery(wrap) {
+  const el = /** @type {HTMLInputElement | null} */ (
+    wrap.querySelector('[data-bdt-match-search]')
+  );
+  return String(el?.value || '')
+    .trim()
+    .toLowerCase();
 }
 
 /**
@@ -510,7 +557,16 @@ function matchStatusLabel(status) {
 
 /**
  * @param {HTMLElement} root
- * @param {{ visible: boolean, current?: number, total?: number, title?: string, label?: string, reset?: boolean }} state
+ * @param {{
+ *   visible: boolean,
+ *   current?: number,
+ *   total?: number,
+ *   title?: string,
+ *   label?: string,
+ *   reset?: boolean,
+ *   activeTitles?: string[],
+ *   concurrency?: number,
+ * }} state
  */
 export function setMatchProgress(root, state) {
   const el = root.querySelector('[data-bdt-progress]');
@@ -524,9 +580,13 @@ export function setMatchProgress(root, state) {
   const total = Math.max(1, Number(state.total) || 1);
   const current = Math.min(total, Math.max(0, Number(state.current) || 0));
   const pct = Math.round((current / total) * 100);
+  const activeTitles = Array.isArray(state.activeTitles)
+    ? state.activeTitles.filter(Boolean)
+    : [];
+  const concurrency = Math.max(0, Number(state.concurrency) || 0);
   const label =
     state.label ||
-    fmtProgress(current, total, state.title || '');
+    fmtProgress(current, total, state.title || '', activeTitles, concurrency);
 
   el.hidden = false;
 
@@ -534,14 +594,16 @@ export function setMatchProgress(root, state) {
   let labelEl = el.querySelector('.bdt-progress__label');
   let pctEl = el.querySelector('.bdt-progress__pct');
   let track = el.querySelector('.bdt-progress__track');
+  let activeEl = el.querySelector('.bdt-progress__active');
 
-  if (!fill || !labelEl || !pctEl || !track) {
+  if (!fill || !labelEl || !pctEl || !track || !activeEl) {
     el.innerHTML = `
       <div class="bdt-progress__head">
         <span class="bdt-progress__spinner" aria-hidden="true"></span>
         <span class="bdt-progress__label"></span>
         <strong class="bdt-progress__pct">0%</strong>
       </div>
+      <div class="bdt-progress__active" hidden></div>
       <div class="bdt-progress__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="bdt-progress__fill" style="width:0%"></div>
       </div>
@@ -550,12 +612,28 @@ export function setMatchProgress(root, state) {
     labelEl = el.querySelector('.bdt-progress__label');
     pctEl = el.querySelector('.bdt-progress__pct');
     track = el.querySelector('.bdt-progress__track');
+    activeEl = el.querySelector('.bdt-progress__active');
   }
 
   if (labelEl) labelEl.textContent = label;
   if (pctEl) pctEl.textContent = `${pct}%`;
   if (track) {
     track.setAttribute('aria-valuenow', String(pct));
+  }
+  if (activeEl) {
+    if (activeTitles.length) {
+      activeEl.hidden = false;
+      activeEl.innerHTML = activeTitles
+        .slice(0, 6)
+        .map(
+          (title) =>
+            `<span class="bdt-progress__chip" title="${escapeAttr(title)}">${escapeHtml(title)}</span>`,
+        )
+        .join('');
+    } else {
+      activeEl.hidden = true;
+      activeEl.innerHTML = '';
+    }
   }
   if (fill) {
     const fillEl = /** @type {HTMLElement} */ (fill);
@@ -570,9 +648,24 @@ export function setMatchProgress(root, state) {
   }
 }
 
-function fmtProgress(current, total, title) {
+/**
+ * @param {number} current
+ * @param {number} total
+ * @param {string} title
+ * @param {string[]} activeTitles
+ * @param {number} concurrency
+ */
+function fmtProgress(current, total, title, activeTitles, concurrency) {
+  if (concurrency > 1 || activeTitles.length > 1) {
+    const active = activeTitles.length || Math.min(concurrency, total - current);
+    return String(t.importMatchProgressParallel || '')
+      .replace('{current}', String(current))
+      .replace('{total}', String(total))
+      .replace('{active}', String(active))
+      .replace('{concurrency}', String(concurrency || active));
+  }
   return String(t.importMatchProgress || '')
     .replace('{current}', String(current))
     .replace('{total}', String(total))
-    .replace('{title}', title);
+    .replace('{title}', title || activeTitles[0] || '…');
 }

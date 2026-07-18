@@ -1,4 +1,4 @@
-import { AUTHOR, REPO_URL, SCRIPT_VERSION, MATCH_DELAY_MS } from '../constants.js';
+import { AUTHOR, REPO_URL, SCRIPT_VERSION, MATCH_CONCURRENCY, MATCH_DELAY_MS } from '../constants.js';
 import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
 import {
   libraryHasGame,
@@ -700,15 +700,18 @@ async function runMatchAndReview(root, doc) {
 
     const matchSummary = await matchTransferEntries(loadedDoc, {
       delayMs: MATCH_DELAY_MS,
+      concurrency: MATCH_CONCURRENCY,
       library,
       shouldCancel: () => runId !== matchRunId,
-      onProgress({ index, total: tot, entry }) {
+      onProgress({ done, total: tot, entry, activeTitles, concurrency }) {
         if (runId !== matchRunId) return;
         setMatchProgress(root, {
           visible: true,
-          current: index + 1,
+          current: done,
           total: tot,
           title: entryDisplayTitle(entry),
+          activeTitles,
+          concurrency,
         });
       },
     });

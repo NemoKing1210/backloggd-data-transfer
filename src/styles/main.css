@@ -2244,6 +2244,174 @@ li.nav-item > #bdt-nav-transfer {
   }
 }
 
+.bdt-csv-values {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.bdt-csv-vmap {
+  border-radius: 12px;
+  border: 1px solid var(--bdt-border);
+  background: var(--bdt-bg-elevated);
+  overflow: hidden;
+}
+
+.bdt-csv-vmap.is-ok {
+  border-color: rgba(61, 184, 154, 0.35);
+}
+
+.bdt-csv-vmap.is-warn {
+  border-color: rgba(255, 183, 77, 0.45);
+}
+
+.bdt-csv-vmap__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.85rem 0.9rem 0.7rem;
+  border-bottom: 1px solid var(--bdt-border);
+  background:
+    linear-gradient(165deg, rgba(61, 184, 154, 0.08), transparent 60%),
+    var(--bdt-bg);
+}
+
+.bdt-csv-vmap.is-warn .bdt-csv-vmap__head {
+  background:
+    linear-gradient(165deg, rgba(255, 183, 77, 0.1), transparent 60%),
+    var(--bdt-bg);
+}
+
+.bdt-csv-vmap__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 750;
+}
+
+.bdt-csv-vmap__lead {
+  margin: 0.3rem 0 0;
+  max-width: 36rem;
+  color: var(--bdt-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.bdt-csv-vmap__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.bdt-csv-vmap__badge {
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bdt-bg-elevated);
+  border: 1px solid var(--bdt-border);
+  color: var(--bdt-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.bdt-csv-vmap__badge.is-ok {
+  background: #5a9e5e;
+  border-color: #5a9e5e;
+  color: #0b1210;
+}
+
+.bdt-csv-vmap__badge.is-warn {
+  background: #c48a3a;
+  border-color: #c48a3a;
+  color: #0b1210;
+}
+
+.bdt-csv-vmap__table-wrap {
+  overflow: auto;
+  max-height: min(42vh, 360px);
+}
+
+.bdt-csv-vmap__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.bdt-csv-vmap__table th,
+.bdt-csv-vmap__table td {
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--bdt-border);
+  vertical-align: middle;
+}
+
+.bdt-csv-vmap__table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bdt-bg);
+  color: var(--bdt-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bdt-csv-vmap__table tr.is-native {
+  opacity: 0.72;
+}
+
+.bdt-csv-vmap__table tr.is-unmapped {
+  background: rgba(229, 115, 115, 0.06);
+}
+
+.bdt-csv-vmap__table tr.is-mapped td:first-child {
+  box-shadow: inset 3px 0 0 var(--bdt-accent);
+}
+
+.bdt-csv-vmap__raw {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--bdt-text);
+}
+
+.bdt-csv-vmap__native {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--bdt-muted);
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.bdt-csv-vmap__count {
+  font-variant-numeric: tabular-nums;
+  color: var(--bdt-muted);
+  white-space: nowrap;
+}
+
+.bdt-csv-vmap__select {
+  min-width: 11rem;
+}
+
+.bdt-csv-vmap__preview {
+  display: inline-block;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(61, 184, 154, 0.14);
+  color: var(--bdt-accent);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.bdt-csv-vmap__preview.is-empty {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--bdt-muted);
+}
+
 .bdt-export-locked {
   display: grid;
   justify-items: center;

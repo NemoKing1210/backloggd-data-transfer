@@ -18,7 +18,8 @@ import {
   setMatchProgress,
 } from './match-ui.js';
 import { clearReadErrors, clearImportErrors, collectImportIssues, collectReadIssues, renderImportErrors, renderReadErrors } from './errors-ui.js';
-import { clearCsvMapping, readCsvMapping, renderCsvMapping } from './csv-map-ui.js';
+import { clearCsvMapping, readCsvMapping, readCsvValueMaps, renderCsvMapping } from './csv-map-ui.js';
+import { rememberCsvValueMaps } from '../format/csv/value-map-memory.js';
 import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
 import { showToast } from './toast.js';
 import {
@@ -42,6 +43,8 @@ let pendingFile = null;
 let csvData = null;
 /** @type {Record<string, string>} */
 let csvMapping = {};
+/** @type {{ status: Record<string, string>, rating: Record<string, string> }} */
+let csvValueMaps = { status: {}, rating: {} };
 /** @type {'json' | 'csv'} */
 let importFormat = 'json';
 /** @type {string | null} */
@@ -235,6 +238,7 @@ function setImportStep(root, step) {
 function goBackToFile(root) {
   csvData = null;
   csvMapping = {};
+  csvValueMaps = { status: {}, rating: {} };
   resetAnalysisUi(root);
   setImportStep(root, 'file');
   syncActionButtons(root);
@@ -253,9 +257,11 @@ function goBackToMapping(root) {
     headers: csvData.headers,
     rows: csvData.rows,
     mapping: csvMapping,
+    valueMaps: csvValueMaps,
     filename: pendingFile?.name,
     onChange(next) {
-      csvMapping = next;
+      csvMapping = next.mapping;
+      csvValueMaps = next.valueMaps;
     },
   });
   setImportStep(root, 'mapping');
@@ -690,6 +696,7 @@ function clearPendingFile(root) {
   pendingFile = null;
   csvData = null;
   csvMapping = {};
+  csvValueMaps = { status: {}, rating: {} };
   const input = root.querySelector('[data-bdt-file]');
   if (input) input.value = '';
   updateDropzoneUi(root);
@@ -920,6 +927,7 @@ export function openPanel(tab = 'import') {
   loadedDoc = null;
   csvData = null;
   csvMapping = {};
+  csvValueMaps = { status: {}, rating: {} };
   importStep = 'file';
   mappingReady = false;
   reviewReady = false;
@@ -1277,9 +1285,11 @@ export function openPanel(tab = 'import') {
         headers: csvData.headers,
         rows: csvData.rows,
         mapping: csvMapping,
+        valueMaps: csvValueMaps,
         filename: pendingFile?.name,
         onChange(next) {
-          csvMapping = next;
+          csvMapping = next.mapping;
+          csvValueMaps = next.valueMaps;
         },
       });
       setImportStep(backdrop, 'mapping');
@@ -1299,9 +1309,12 @@ export function openPanel(tab = 'import') {
       return;
     }
     csvMapping = readCsvMapping(backdrop);
+    csvValueMaps = readCsvValueMaps(backdrop);
+    rememberCsvValueMaps(csvValueMaps);
     const built = buildTransferFromCsv({
       rows: csvData.rows,
       mapping: csvMapping,
+      valueMaps: csvValueMaps,
       filename: pendingFile?.name,
     });
     if (!built.ok) {
@@ -1333,14 +1346,17 @@ export function openPanel(tab = 'import') {
         }
         csvData = parsed;
         csvMapping = suggestCsvMapping(parsed.headers);
+        csvValueMaps = { status: {}, rating: {} };
         mappingReady = true;
         renderCsvMapping(backdrop, {
           headers: parsed.headers,
           rows: parsed.rows,
           mapping: csvMapping,
+          valueMaps: csvValueMaps,
           filename: pendingFile.name,
           onChange(next) {
-            csvMapping = next;
+            csvMapping = next.mapping;
+            csvValueMaps = next.valueMaps;
           },
         });
         setImportStep(backdrop, 'mapping');
@@ -1480,6 +1496,7 @@ export function closePanel() {
   loadedDoc = null;
   csvData = null;
   csvMapping = {};
+  csvValueMaps = { status: {}, rating: {} };
   importStep = 'file';
   mappingReady = false;
   reviewReady = false;

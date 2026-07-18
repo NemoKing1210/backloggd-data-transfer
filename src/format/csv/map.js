@@ -1,5 +1,6 @@
 import { createDocument } from '../schema.js';
-import { mapRatingToScore10, mapStatusToCanonical, parseFavorite } from '../status.js';
+import { parseFavorite } from '../status.js';
+import { resolveRatingValue, resolveStatusValue } from './value-map.js';
 
 /**
  * @typedef {{
@@ -176,12 +177,18 @@ export function validateCsvMapping(mapping) {
  *   rows: Record<string, string>[],
  *   mapping: Record<string, string>,
  *   filename?: string,
+ *   valueMaps?: {
+ *     status?: Record<string, string>,
+ *     rating?: Record<string, string>,
+ *   },
  * }} input
  */
 export function buildTransferFromCsv(input) {
   const mapping = input.mapping || {};
   const check = validateCsvMapping(mapping);
   if (!check.ok) return { ok: false, error: check.error };
+  const statusMap = input.valueMaps?.status || {};
+  const ratingMap = input.valueMaps?.rating || {};
 
   /** @type {object[]} */
   const entries = [];
@@ -190,8 +197,8 @@ export function buildTransferFromCsv(input) {
     const title = cell(row, mapping.title).trim();
     if (!title) continue;
 
-    const status = mapStatusToCanonical(cell(row, mapping.status));
-    const rating = mapRatingToScore10(cell(row, mapping.rating));
+    const status = resolveStatusValue(cell(row, mapping.status), statusMap);
+    const rating = resolveRatingValue(cell(row, mapping.rating), ratingMap);
     const favorite = parseFavorite(cell(row, mapping.favorite));
     const platform = cell(row, mapping.platform).trim();
     const start = cell(row, mapping.start_date);

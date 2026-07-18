@@ -15,6 +15,8 @@ export const AUTHOR = Object.freeze({
 });
 export const SETTINGS_KEY = 'bdt_settings';
 export const HISTORY_KEY = 'bdt_history';
+/** Remembered CSV status/rating value maps (raw label → target). */
+export const CSV_VALUE_MAP_KEY = 'bdt_csv_value_maps';
 /** Keep the latest N transfer sessions in GM storage. */
 export const HISTORY_MAX_ENTRIES = 50;
 export const ROOT_ATTR = 'data-bdt-root';
@@ -78,6 +80,13 @@ export const ALT_STATUS_TO_CANONICAL = Object.freeze({
   infinity: 'playing',
   infinite: 'playing',
   endless: 'playing',
+  // Notion / Plus export labels (case-insensitive keys)
+  wishlist: 'wishlist',
+  backlog: 'backlog',
+  playing: 'playing',
+  shelved: 'shelved',
+  abandoned: 'abandoned',
+  retired: 'retired',
 });
 
 export const DEFAULT_SETTINGS = {

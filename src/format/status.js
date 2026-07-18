@@ -1,7 +1,11 @@
 import { ALT_STATUS_TO_CANONICAL, LOG_STATUS_LABELS } from '../constants.js';
 import { normalizeLogStatus, normalizeRating } from './schema.js';
 
-const RATING_LABEL_TO_SCORE = Object.freeze({
+/**
+ * Notion / Plus-style text labels → Backloggd API score 1–10.
+ * Aligns with backloggd-plus `ratingScoreToLabel` (import direction).
+ */
+export const RATING_LABEL_TO_SCORE = Object.freeze({
   terrible: 1,
   bad: 2,
   mediocre: 3,
@@ -10,6 +14,20 @@ const RATING_LABEL_TO_SCORE = Object.freeze({
   great: 7,
   excellent: 8,
   amazing: 10,
+});
+
+/** Backloggd score 1–10 → display label (Plus export ladder). */
+export const RATING_SCORE_LABELS = Object.freeze({
+  1: 'Terrible',
+  2: 'Bad',
+  3: 'Mediocre',
+  4: 'Mediocre',
+  5: 'Normal',
+  6: 'Good',
+  7: 'Great',
+  8: 'Excellent',
+  9: 'Excellent',
+  10: 'Amazing',
 });
 
 /**
@@ -27,7 +45,7 @@ export function mapStatusToCanonical(raw) {
     .replace(/\s+/g, ' ');
   if (!v) return null;
 
-  if (v in ALT_STATUS_TO_CANONICAL) {
+  if (Object.prototype.hasOwnProperty.call(ALT_STATUS_TO_CANONICAL, v)) {
     return ALT_STATUS_TO_CANONICAL[v];
   }
 
@@ -48,6 +66,9 @@ export function mapRatingToScore10(raw) {
 
   const s = String(raw).trim();
   if (!s) return null;
+
+  // Skip placeholder ellipsis used in some Notion exports.
+  if (s === '...' || s === '…' || s === '-' || s === '—') return null;
 
   const label = RATING_LABEL_TO_SCORE[s.toLowerCase()];
   if (label != null) return label;

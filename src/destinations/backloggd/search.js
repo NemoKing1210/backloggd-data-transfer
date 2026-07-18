@@ -1,7 +1,7 @@
 import { gmRequest } from '../../gm.js';
 import { scoreTitleMatch } from '../../utils/title.js';
+import { backloggdUrl } from './site.js';
 
-const AUTOCOMPLETE_URL = 'https://www.backloggd.com/autocomplete';
 /** Minimum score to accept an autocomplete suggestion as a match. */
 export const MATCH_MIN_SCORE = 72;
 
@@ -23,7 +23,7 @@ export async function searchBackloggdSuggestions(title) {
   const q = String(title || '').trim();
   if (!q) return { suggestions: [], best: null };
 
-  const url = `${AUTOCOMPLETE_URL}?query=${encodeURIComponent(q)}`;
+  const url = backloggdUrl(`/autocomplete?query=${encodeURIComponent(q)}`);
   const data = await fetchAutocomplete(url);
   const raw = Array.isArray(data?.suggestions) ? data.suggestions : [];
 
@@ -40,7 +40,7 @@ export async function searchBackloggdSuggestions(title) {
         title: matchTitle,
         year: d.year != null ? String(d.year) : '',
         score: scoreTitleMatch(q, matchTitle),
-        url: slug ? `https://www.backloggd.com/games/${encodeURIComponent(slug)}/` : '',
+        url: slug ? backloggdUrl(`/games/${encodeURIComponent(slug)}/`) : '',
       };
     })
     .filter(Boolean)

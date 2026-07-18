@@ -1,3 +1,5 @@
+import { gmRequest } from '../../gm.js';
+import { backloggdOrigin, backloggdUrl } from './site.js';
 import { getCurrentUsername } from './user.js';
 
 /** Library list paths under `/u/{user}/games/added/`. */
@@ -41,19 +43,23 @@ export async function loadCurrentUserLibrary(options = {}) {
   /** @type {Set<string>} */
   const slugs = new Set();
   let pageCount = 0;
+  let loadedAnyPage = false;
+  /** @type {string | null} */
+  let lastError = null;
 
   for (let listIndex = 0; listIndex < LIBRARY_LISTS.length; listIndex += 1) {
     if (options.shouldCancel?.()) break;
 
     const list = LIBRARY_LISTS[listIndex];
-    let url = `https://www.backloggd.com/u/${encodeURIComponent(username)}/games/added/${list}/`;
+    let url = backloggdUrl(
+      `/u/${encodeURIComponent(username)}/games/added/${list}/`,
+    );
     let page = 0;
 
     while (url && page < MAX_PAGES_PER_LIST) {
       if (options.shouldCancel?.()) break;
 
       page += 1;
-      pageCount += 1;
       options.onProgress?.({
         listIndex,
         listTotal: LIBRARY_LISTS.length,
@@ -61,13 +67,28 @@ export async function loadCurrentUserLibrary(options = {}) {
         list,
       });
 
-      const html = await fetchLibraryHtml(url);
+      let html;
+      try {
+        html = await fetchLibraryHtml(url);
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        // Missing filter / empty shelf — skip this list.
+        if (page === 1) break;
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+
+      loadedAnyPage = true;
+      pageCount += 1;
       const parsed = parseLibraryPage(html);
       for (const id of parsed.gameIds) gameIds.add(id);
       for (const slug of parsed.slugs) slugs.add(slug);
 
       url = parsed.nextUrl;
     }
+  }
+
+  if (!loadedAnyPage && lastError) {
+    throw new Error(lastError);
   }
 
   return { username, gameIds, slugs, pageCount };
@@ -94,14 +115,31 @@ export function libraryHasGame(gameId, slug, library) {
  * @returns {Promise<string>}
  */
 async function fetchLibraryHtml(url) {
-  const res = await fetch(url, {
-    credentials: 'include',
-    headers: { Accept: 'text/html' },
-  });
-  if (!res.ok) {
-    throw new Error(`Library HTTP ${res.status}`);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      credentials: 'same-origin',
+      headers: { Accept: 'text/html' },
+    });
+    if (!res.ok) {
+      throw new Error(`Library HTTP ${res.status}`);
+    }
+    return await res.text();
+  } catch (err) {
+    try {
+      const html = await gmRequest({
+        url,
+        method: 'GET',
+        responseType: 'text',
+        headers: { Accept: 'text/html' },
+        timeout: 25000,
+      });
+      if (typeof html === 'string' && html) return html;
+    } catch (_) {
+      /* keep original error */
+    }
+    throw err instanceof Error ? err : new Error(String(err));
   }
-  return res.text();
 }
 
 /**
@@ -130,9 +168,7 @@ function parseLibraryPage(html) {
     doc.querySelector('a[rel="next"]')?.getAttribute('href') ||
     doc.querySelector('.pagination a[rel="next"]')?.getAttribute('href') ||
     '';
-  const nextUrl = nextHref
-    ? new URL(nextHref, 'https://www.backloggd.com').href
-    : null;
+  const nextUrl = nextHref ? new URL(nextHref, backloggdOrigin()).href : null;
 
   return { gameIds, slugs, nextUrl };
 }

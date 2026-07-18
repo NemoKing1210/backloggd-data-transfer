@@ -3,6 +3,7 @@ import { entryDisplayTitle } from '../../format/schema.js';
 import { sleep } from '../../utils/download.js';
 import { libraryHasGame } from './library.js';
 import { searchBackloggdGame } from './search.js';
+import { backloggdUrl } from './site.js';
 
 /**
  * @typedef {'found' | 'not_found' | 'preset' | 'error'} MatchStatus
@@ -60,7 +61,7 @@ export async function matchTransferEntries(doc, options = {}) {
           year: '',
           score: 100,
           url: entry.slug
-            ? `https://www.backloggd.com/games/${encodeURIComponent(entry.slug)}/`
+            ? backloggdUrl(`/games/${encodeURIComponent(entry.slug)}/`)
             : '',
         },
         existingLog: libraryHasGame(entry.game_id, entry.slug, library),

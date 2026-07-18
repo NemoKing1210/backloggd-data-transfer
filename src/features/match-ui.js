@@ -12,6 +12,7 @@ import { t } from '../state.js';
  *   importExisting?: boolean,
  *   onSelectionChange?: (selected: number) => void,
  *   onImportExistingChange?: (enabled: boolean) => void,
+ *   onManualGameId?: (index: number, raw: string) => void | Promise<void>,
  * }} [options]
  */
 export function renderMatchTable(root, results, options = {}) {
@@ -32,22 +33,40 @@ export function renderMatchTable(root, results, options = {}) {
       const pt = primaryPlaythrough(entry);
       const title = entryDisplayTitle(entry);
       const matchedTitle = row.match?.title || '—';
-      const gameId = row.match?.id ?? entry.game_id ?? '—';
+      const gameId = row.match?.id ?? entry.game_id ?? '';
       const year = row.match?.year || '—';
       const link = row.match?.url
         ? `<a href="${escapeAttr(row.match.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(matchedTitle)}</a>`
         : escapeHtml(matchedTitle);
       const importable = row.status === 'found' || row.status === 'preset';
+      const needsManualId =
+        row.status === 'not_found' || row.status === 'error';
       const checked = importable && (row.existingLog ? importExisting : true);
       const existingLabel = row.existingLog
         ? t.importMatchExistingYes
         : t.importMatchExistingNo;
       const platformLabel =
         platformByIdOrName(pt.platform)?.name || '—';
+      const idCell = needsManualId
+        ? `<div class="bdt-match-id-edit">
+            <input
+              type="text"
+              inputmode="numeric"
+              class="bdt-match-id-input"
+              data-bdt-match-manual-id
+              data-index="${row.index}"
+              placeholder="${escapeAttr(t.importMatchManualIdPlaceholder)}"
+              aria-label="${escapeAttr(fmt(t.importMatchManualIdAria, { title }))}"
+              title="${escapeAttr(t.importMatchManualIdHint)}"
+            />
+            <span class="bdt-match-id-status" data-bdt-match-id-status hidden></span>
+          </div>`
+        : escapeHtml(gameId === '' ? '—' : String(gameId));
 
       return `
         <tr
           class="bdt-match-row bdt-match-row--${escapeAttr(row.status)}${row.existingLog ? ' bdt-match-row--existing' : ''}${importable ? '' : ' bdt-match-row--blocked'}"
+          data-bdt-match-index="${row.index}"
           data-existing="${row.existingLog ? '1' : '0'}"
           data-importable="${importable ? '1' : '0'}"
           data-status="${escapeAttr(row.status)}"
@@ -82,7 +101,7 @@ export function renderMatchTable(root, results, options = {}) {
             <span class="bdt-match-pill bdt-match-pill--${row.existingLog ? 'existing' : 'new'}">${escapeHtml(existingLabel)}</span>
           </td>
           <td class="bdt-match-col-site">${link}</td>
-          <td class="bdt-match-col-id">${escapeHtml(String(gameId))}</td>
+          <td class="bdt-match-col-id">${idCell}</td>
           <td>${escapeHtml(year)}</td>
         </tr>
       `;
@@ -175,6 +194,7 @@ export function renderMatchTable(root, results, options = {}) {
   `;
   wrap.hidden = false;
   bindMatchSelection(wrap, options);
+  bindManualGameId(wrap, options);
   applyMatchFilters(wrap);
   syncMatchSelectionUi(wrap, options.onSelectionChange);
 }
@@ -212,6 +232,91 @@ export function getSelectedMatchIndices(root) {
       return row?.getAttribute('data-importable') !== '0';
     })
     .map((el) => Number(/** @type {HTMLInputElement} */ (el).value));
+}
+
+/**
+ * @param {HTMLElement} wrap
+ * @param {{
+ *   onManualGameId?: (index: number, raw: string) => void | Promise<void>,
+ * }} options
+ */
+function bindManualGameId(wrap, options) {
+  if (!options.onManualGameId) return;
+
+  /** @type {Map<HTMLInputElement, ReturnType<typeof setTimeout>>} */
+  const timers = new Map();
+
+  const commit = async (input) => {
+    const raw = String(input.value || '').trim();
+    if (!raw) return;
+    if (input.dataset.bdtCommitted === raw || input.disabled) return;
+    const index = Number(input.getAttribute('data-index'));
+    if (!Number.isFinite(index)) return;
+
+    input.dataset.bdtCommitted = raw;
+    const statusEl = input
+      .closest('.bdt-match-id-edit')
+      ?.querySelector('[data-bdt-match-id-status]');
+    input.disabled = true;
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent = t.importMatchManualIdLoading;
+      statusEl.classList.remove('bdt-match-id-status--error');
+    }
+
+    try {
+      await options.onManualGameId?.(index, raw);
+    } catch (err) {
+      delete input.dataset.bdtCommitted;
+      input.disabled = false;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.textContent =
+          err instanceof Error ? err.message : String(err);
+        statusEl.classList.add('bdt-match-id-status--error');
+      }
+    }
+  };
+
+  wrap.addEventListener('keydown', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!target.matches('[data-bdt-match-manual-id]')) return;
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const timer = timers.get(target);
+    if (timer) clearTimeout(timer);
+    void commit(target);
+  });
+
+  wrap.addEventListener('focusout', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!target.matches('[data-bdt-match-manual-id]')) return;
+    const timer = timers.get(target);
+    if (timer) clearTimeout(timer);
+    void commit(target);
+  });
+
+  wrap.addEventListener('input', (e) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (!target.matches('[data-bdt-match-manual-id]')) return;
+    const prev = timers.get(target);
+    if (prev) clearTimeout(prev);
+    const raw = String(target.value || '').trim();
+    // Auto-commit once a full numeric id (or URL) looks complete.
+    const ready =
+      /^\d{3,}$/.test(raw) || /\/games\/[^/?#]+/i.test(raw) || /^https?:\/\//i.test(raw);
+    if (!ready) return;
+    timers.set(
+      target,
+      setTimeout(() => {
+        timers.delete(target);
+        void commit(target);
+      }, 550),
+    );
+  });
 }
 
 /**

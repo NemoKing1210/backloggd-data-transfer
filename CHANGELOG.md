@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-07-18
+
+### Changed
+
+- Rating placeholders (`...`, `-`, `—`, `n/a`, `none`, `?`, …) auto-map to no rating instead of “unmapped”.
+
+## [0.4.2] - 2026-07-18
+
+### Changed
+
+- Auto-map MMORPG, Roguelike, Sandbox, Gacha, Infinity/Infinite, Session (and Endless) status labels to `played`.
+
+## [0.4.1] - 2026-07-18
+
+### Added
+
+- `played` as its own Backloggd `log.status` (separate from `completed`) in status mapping.
+- Reset button on CSV value-map blocks; manual vs auto mappings are labeled and only manual choices are remembered.
+
+## [0.4.0] - 2026-07-18
+
+### Added
+
+- Manual Backloggd `game_id` (or `/games/slug/` URL) on unmatched rows — looks up metadata and updates the match table.
+
 ## [0.3.9] - 2026-07-18
 
 ### Fixed

@@ -115,11 +115,11 @@ export function normalizeDate(raw) {
   return '';
 }
 
-/** Backloggd log.status string (completed, playing, …). */
+/** Backloggd log.status string (completed, playing, played, …). */
 export function normalizeLogStatus(raw) {
   if (raw == null || raw === '') return null;
   let key = String(raw).trim().toLowerCase().replace(/\s+/g, ' ');
-  if (key === 'played' || key === 'done') key = 'completed';
+  if (key === 'done') key = 'completed';
   if (LOG_STATUS_KEYS.includes(key)) return key;
   return null;
 }
@@ -159,7 +159,13 @@ function toNullableNumber(raw) {
 export function flagsFromLogStatus(status) {
   const s = normalizeLogStatus(status);
   return {
-    is_play: s === 'completed',
+    is_play:
+      s === 'playing' ||
+      s === 'played' ||
+      s === 'completed' ||
+      s === 'shelved' ||
+      s === 'abandoned' ||
+      s === 'retired',
     is_playing: s === 'playing',
     is_backlog: s === 'backlog',
     is_wishlist: s === 'wishlist',
@@ -252,8 +258,9 @@ export function migrateV1Entry(raw) {
   if (raw.log || Array.isArray(raw.playthroughs)) return raw;
 
   const status = normalizeLogStatus(
-    /** @type {string} */ (raw.status) === 'played' ? 'completed' : raw.status,
+    /** @type {string} */ (raw.status),
   );
+  const flags = flagsFromLogStatus(status);
   const start = normalizeDate(raw.dateStart || raw.start_date);
   const end = normalizeDate(raw.dateEnd || raw.finish_date);
   const resolvedPlatform = mapPlatformToBackloggd(raw.platform);
@@ -265,10 +272,7 @@ export function migrateV1Entry(raw) {
     log: {
       game_liked: raw.favorite ?? raw.game_liked,
       status,
-      is_play: status === 'completed',
-      is_playing: status === 'playing',
-      is_backlog: status === 'backlog',
-      is_wishlist: status === 'wishlist',
+      ...flags,
     },
     playthroughs: [
       {

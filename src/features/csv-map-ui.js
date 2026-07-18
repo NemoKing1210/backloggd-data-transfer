@@ -16,12 +16,14 @@ import {
 } from '../format/csv/value-map.js';
 import {
   applyRememberedValueMap,
+  forgetCsvValueMapKeys,
+  isRememberedValue,
   loadCsvValueMapMemory,
-  rememberCsvValueMaps,
+  rememberCsvValueMapEntry,
 } from '../format/csv/value-map-memory.js';
 import { LOG_STATUS_LABELS } from '../constants.js';
 import { platformByIdOrName } from '../format/platforms.js';
-import { RATING_SCORE_LABELS } from '../format/status.js';
+import { RATING_SCORE_LABELS, isRatingSkipValue } from '../format/status.js';
 import { t } from '../state.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
 
@@ -152,6 +154,8 @@ export function renderCsvMapping(root, options) {
                 lead: t.csvValueStatusLead,
                 analysis: statusAnalysis,
                 valueMap: valueMaps.status,
+                suggestedMap: suggestedStatus,
+                remembered: memory.status,
                 options: statusOpts,
                 formatTarget: (v) => LOG_STATUS_LABELS[v] || v || t.csvValueSkip,
               })
@@ -165,6 +169,8 @@ export function renderCsvMapping(root, options) {
                 lead: t.csvValueRatingLead,
                 analysis: ratingAnalysis,
                 valueMap: valueMaps.rating,
+                suggestedMap: suggestedRating,
+                remembered: memory.rating,
                 options: ratingOpts,
                 formatTarget: (v) => {
                   if (!v) return t.csvValueSkip;
@@ -183,6 +189,8 @@ export function renderCsvMapping(root, options) {
                 lead: t.csvValuePlatformLead,
                 analysis: platformAnalysis,
                 valueMap: valueMaps.platform,
+                suggestedMap: suggestedPlatform,
+                remembered: memory.platform,
                 options: platformOpts,
                 formatTarget: (v) => {
                   if (!v) return t.csvValueSkip;
@@ -199,7 +207,6 @@ export function renderCsvMapping(root, options) {
   const emit = () => {
     const nextMapping = readCsvMapping(root);
     const nextValues = readCsvValueMaps(root);
-    rememberCsvValueMaps(nextValues);
     options.onChange?.({ mapping: nextMapping, valueMaps: nextValues });
   };
 
@@ -268,7 +275,10 @@ export function renderCsvMapping(root, options) {
     select.addEventListener('change', () => {
       const row = select.closest('tr');
       const preview = row?.querySelector('.bdt-csv-vmap__preview');
-      const kind = select.getAttribute('data-bdt-csv-value-kind');
+      const kind = /** @type {'status' | 'rating' | 'platform' | null} */ (
+        select.getAttribute('data-bdt-csv-value-kind')
+      );
+      const raw = select.getAttribute('data-bdt-csv-value') || '';
       const value = /** @type {HTMLSelectElement} */ (select).value || '';
       if (preview) {
         preview.classList.toggle('is-empty', !value);
@@ -286,11 +296,68 @@ export function renderCsvMapping(root, options) {
           preview.textContent = hit ? hit.name : t.csvValueSkip;
         }
       }
+      if (kind && raw) {
+        rememberCsvValueMapEntry(kind, raw, value);
+      }
       if (row && !row.classList.contains('is-native')) {
         row.classList.toggle('is-mapped', Boolean(value));
         row.classList.toggle('is-unmapped', !value);
+        row.classList.add('is-manual');
+        const origin = row.querySelector('[data-bdt-csv-value-origin]');
+        if (origin) {
+          origin.hidden = false;
+          origin.textContent = t.csvValueManual;
+          origin.className =
+            'bdt-csv-vmap__origin bdt-csv-vmap__origin--manual';
+        }
       }
       emit();
+    });
+  });
+
+  host.querySelectorAll('[data-bdt-csv-value-reset]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const kind = /** @type {'status' | 'rating' | 'platform' | null} */ (
+        btn.getAttribute('data-bdt-csv-value-reset')
+      );
+      if (kind !== 'status' && kind !== 'rating' && kind !== 'platform') return;
+
+      const block = btn.closest('[data-bdt-csv-vmap-kind]');
+      const rawKeys = [
+        ...block?.querySelectorAll('[data-bdt-csv-value]') || [],
+      ]
+        .map((el) => el.getAttribute('data-bdt-csv-value') || '')
+        .filter(Boolean);
+      forgetCsvValueMapKeys(kind, rawKeys);
+
+      const nextMapping = readCsvMapping(root);
+      const currentValues = readCsvValueMaps(root);
+      /** @type {CsvValueMaps} */
+      const nextValueMaps = {
+        status: { ...currentValues.status },
+        rating: { ...currentValues.rating },
+        platform: { ...currentValues.platform },
+      };
+
+      if (kind === 'status' && statusAnalysis) {
+        nextValueMaps.status = suggestStatusValueMap(statusAnalysis);
+      } else if (kind === 'rating' && ratingAnalysis) {
+        nextValueMaps.rating = suggestRatingValueMap(ratingAnalysis);
+      } else if (kind === 'platform' && platformAnalysis) {
+        nextValueMaps.platform = suggestPlatformValueMap(platformAnalysis);
+      }
+
+      options.onChange?.({
+        mapping: nextMapping,
+        valueMaps: nextValueMaps,
+      });
+      renderCsvMapping(root, {
+        ...options,
+        mapping: nextMapping,
+        valueMaps: nextValueMaps,
+      });
     });
   });
 }
@@ -350,6 +417,8 @@ export function clearCsvMapping(root) {
  *   lead: string,
  *   analysis: { values: { raw: string, count: number, needsMap: boolean, suggested: unknown }[], mappedCount: number, unmappedCount: number },
  *   valueMap: Record<string, string>,
+ *   suggestedMap: Record<string, string>,
+ *   remembered: Record<string, string>,
  *   options: { value: string, label: string }[],
  *   formatTarget: (value: string) => string,
  * }} cfg
@@ -359,9 +428,12 @@ function renderValueMapBlock(cfg) {
   const badgeText = warn
     ? fmtLocal(t.csvValueUnmappedStat, { count: cfg.analysis.unmappedCount })
     : t.csvValueAllMapped;
+  const manualCount = cfg.analysis.values.filter((item) =>
+    isRememberedValue(cfg.remembered, item.raw),
+  ).length;
 
   return `
-    <details class="bdt-csv-vmap ${warn ? 'is-warn' : 'is-ok'}">
+    <details class="bdt-csv-vmap ${warn ? 'is-warn' : 'is-ok'}" data-bdt-csv-vmap-kind="${escapeAttr(cfg.kind)}">
       <summary class="bdt-csv-vmap__summary">
         <div class="bdt-csv-vmap__summary-main">
           <span class="bdt-csv-vmap__chevron" aria-hidden="true"></span>
@@ -374,11 +446,26 @@ function renderValueMapBlock(cfg) {
           <span class="bdt-csv-vmap__badge">${escapeHtml(
             fmtLocal(t.csvValueUniqueStat, { count: cfg.analysis.values.length }),
           )}</span>
+          ${
+            manualCount
+              ? `<span class="bdt-csv-vmap__badge is-manual">${escapeHtml(
+                  fmtLocal(t.csvValueManualStat, { count: manualCount }),
+                )}</span>`
+              : ''
+          }
           <span class="bdt-csv-vmap__badge ${warn ? 'is-warn' : 'is-ok'}">${escapeHtml(
             badgeText,
           )}</span>
         </div>
       </summary>
+      <div class="bdt-csv-vmap__toolbar">
+        <button
+          type="button"
+          class="bdt-btn bdt-btn--ghost bdt-csv-vmap__reset"
+          data-bdt-csv-value-reset="${escapeAttr(cfg.kind)}"
+          title="${escapeAttr(t.csvValueResetHint)}"
+        >${escapeHtml(t.csvValueReset)}</button>
+      </div>
       <div class="bdt-csv-vmap__table-wrap">
         <table class="bdt-csv-vmap__table">
           <thead>
@@ -394,19 +481,34 @@ function renderValueMapBlock(cfg) {
               .map((item) => {
                 const selected = valueMapLookup(cfg.valueMap, item.raw);
                 const preview = cfg.formatTarget(selected);
-                const rowClass = item.needsMap
-                  ? selected
-                    ? 'is-mapped'
-                    : 'is-unmapped'
-                  : 'is-native';
+                const manual = isRememberedValue(cfg.remembered, item.raw);
+                const rowClass = [
+                  item.needsMap
+                    ? selected
+                      ? 'is-mapped'
+                      : 'is-unmapped'
+                    : 'is-native',
+                  manual ? 'is-manual' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ');
                 return `
                   <tr class="${rowClass}">
                     <td>
                       <code class="bdt-csv-vmap__raw">${escapeHtml(item.raw)}</code>
                       ${
                         item.needsMap
-                          ? ''
-                          : `<span class="bdt-csv-vmap__native">${escapeHtml(t.csvValueNative)}</span>`
+                          ? `<span
+                              class="bdt-csv-vmap__origin ${manual ? 'bdt-csv-vmap__origin--manual' : 'bdt-csv-vmap__origin--auto'}"
+                              data-bdt-csv-value-origin
+                            >${escapeHtml(
+                              manual ? t.csvValueManual : t.csvValueAuto,
+                            )}</span>`
+                          : `<span class="bdt-csv-vmap__native">${escapeHtml(
+                              cfg.kind === 'rating' && isRatingSkipValue(item.raw)
+                                ? t.csvValueNoRating
+                                : t.csvValueNative,
+                            )}</span>`
                       }
                     </td>
                     <td class="bdt-csv-vmap__count">${escapeHtml(String(item.count))}</td>

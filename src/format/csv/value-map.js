@@ -8,6 +8,7 @@ import {
 } from '../platforms.js';
 import { normalizeLogStatus, normalizeRating } from '../schema.js';
 import {
+  isRatingSkipValue,
   mapRatingToScore10,
   mapStatusToCanonical,
   RATING_SCORE_LABELS,
@@ -135,8 +136,14 @@ export function analyzeRatingValues(rows, header) {
   const counts = collectColumnValueCounts(rows, header);
   /** @type {RatingValueInfo[]} */
   const values = counts.map(({ raw, count }) => {
+    if (isRatingSkipValue(raw)) {
+      // Placeholder → no rating (skip); not an unmapped problem.
+      return { raw, count, needsMap: false, suggested: null };
+    }
     const needsMap = !isCanonicalRatingValue(raw);
-    const suggested = needsMap ? mapRatingToScore10(raw) : normalizeRating(Number(String(raw).replace(',', '.')));
+    const suggested = needsMap
+      ? mapRatingToScore10(raw)
+      : normalizeRating(Number(String(raw).replace(',', '.')));
     return { raw, count, needsMap, suggested };
   });
   const mappedCount = values.filter((v) => v.needsMap && v.suggested != null).length;
@@ -176,6 +183,10 @@ export function suggestRatingValueMap(analysis) {
   /** @type {Record<string, string>} */
   const out = {};
   for (const item of analysis.values || []) {
+    if (isRatingSkipValue(item.raw)) {
+      out[item.raw] = '';
+      continue;
+    }
     if (!item.needsMap) {
       const n = normalizeRating(Number(String(item.raw).replace(',', '.')));
       out[item.raw] = n != null ? String(n) : '';

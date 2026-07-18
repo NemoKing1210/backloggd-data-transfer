@@ -30,6 +30,7 @@ export function loadCsvValueMapMemory() {
 
 /**
  * Persist status/rating/platform value maps (keys stored lowercased).
+ * Merges into existing memory.
  * @param {{
  *   status?: Record<string, string>,
  *   rating?: Record<string, string>,
@@ -43,12 +44,54 @@ export function rememberCsvValueMaps(valueMaps) {
     rating: { ...current.rating, ...toMemoryEntries(valueMaps?.rating) },
     platform: { ...current.platform, ...toMemoryEntries(valueMaps?.platform) },
   };
-  try {
-    GM_setValue(CSV_VALUE_MAP_KEY, next);
-  } catch (_) {
-    /* ignore quota / private mode */
-  }
+  persistMemory(next);
   return next;
+}
+
+/**
+ * Remember one user override (manual mapping).
+ * @param {'status' | 'rating' | 'platform'} kind
+ * @param {string} raw
+ * @param {string} value
+ */
+export function rememberCsvValueMapEntry(kind, raw, value) {
+  return rememberCsvValueMaps({ [kind]: { [raw]: value } });
+}
+
+/**
+ * Remove remembered overrides for the given source labels.
+ * @param {'status' | 'rating' | 'platform'} kind
+ * @param {string[]} rawKeys
+ */
+export function forgetCsvValueMapKeys(kind, rawKeys) {
+  const current = loadCsvValueMapMemory();
+  /** @type {CsvValueMapMemory} */
+  const next = {
+    status: { ...current.status },
+    rating: { ...current.rating },
+    platform: { ...current.platform },
+  };
+  for (const raw of rawKeys || []) {
+    const key = String(raw || '')
+      .trim()
+      .toLowerCase();
+    if (key) delete next[kind][key];
+  }
+  persistMemory(next);
+  return next;
+}
+
+/**
+ * Whether a source label has a saved manual override.
+ * @param {Record<string, string>} remembered lowercased keys
+ * @param {string} raw
+ */
+export function isRememberedValue(remembered, raw) {
+  const key = String(raw || '')
+    .trim()
+    .toLowerCase();
+  if (!key || !remembered) return false;
+  return Object.prototype.hasOwnProperty.call(remembered, key);
 }
 
 /**
@@ -75,6 +118,17 @@ export function applyRememberedValueMap(suggested, remembered, values) {
 /** @returns {CsvValueMapMemory} */
 function emptyMemory() {
   return { status: {}, rating: {}, platform: {} };
+}
+
+/**
+ * @param {CsvValueMapMemory} next
+ */
+function persistMemory(next) {
+  try {
+    GM_setValue(CSV_VALUE_MAP_KEY, next);
+  } catch (_) {
+    /* ignore quota / private mode */
+  }
 }
 
 /**

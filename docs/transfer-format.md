@@ -109,7 +109,7 @@ Current version: **2**.
 | `is_playing` | `log[is_playing]` | |
 | `is_backlog` | `log[is_backlog]` | |
 | `is_wishlist` | `log[is_wishlist]` | |
-| `status` | `log[status]` | e.g. `completed`, `playing`, `backlog`, `wishlist`, `shelved`, `abandoned`, `retired` |
+| `status` | `log[status]` | e.g. `played`, `completed`, `playing`, `backlog`, `wishlist`, `shelved`, `abandoned`, `retired` |
 | `total_hours` / `total_minutes` | `log[total_*]` | |
 | `time_source` | `log[time_source]` | Default `1` |
 | `override_cover_id` | `log[override_cover_id]` | Optional cover |
@@ -150,7 +150,7 @@ On import, each session gets `id=-1` and `edited=true`.
 
 No longer part of the format: `tags`, `isDlc`, `favorite` (use `log.game_liked`), flat `status` / `rating` / `platform` / `dateStart` / `dateEnd` / `review`, `externalIds`, `sourceFields`.
 
-v1 files are still **accepted**: the parser migrates them into v2 shape (`played` → `completed`, etc.).
+v1 files are still **accepted**: the parser migrates them into v2 shape.
 
 ## `log.status` values
 
@@ -159,7 +159,8 @@ v1 files are still **accepted**: the parser migrates them into v2 shape (`played
 | `wishlist` | Wishlist |
 | `backlog` | Backlog |
 | `playing` | Playing |
-| `completed` | Completed / Played |
+| `played` | Played (nothing specific) |
+| `completed` | Completed (main objective) |
 | `shelved` | Shelved |
 | `abandoned` | Abandoned |
 | `retired` | Retired |

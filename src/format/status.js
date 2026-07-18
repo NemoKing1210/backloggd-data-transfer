@@ -57,6 +57,39 @@ export function mapStatusToCanonical(raw) {
 }
 
 /**
+ * Placeholder / empty rating cells from Notion and similar exports.
+ * @param {unknown} raw
+ * @returns {boolean}
+ */
+export function isRatingSkipValue(raw) {
+  if (raw == null) return true;
+  const s = String(raw).trim();
+  if (!s) return true;
+  const key = s.toLowerCase();
+  return (
+    key === '...' ||
+    key === '…' ||
+    key === '‥' ||
+    key === '-' ||
+    key === '–' ||
+    key === '—' ||
+    key === '−' ||
+    key === 'n/a' ||
+    key === 'na' ||
+    key === 'none' ||
+    key === 'null' ||
+    key === 'nil' ||
+    key === 'no rating' ||
+    key === 'unrated' ||
+    key === '?' ||
+    key === '??' ||
+    key === 'x' ||
+    key === '.' ||
+    key === '..'
+  );
+}
+
+/**
  * @param {unknown} raw
  * @returns {number|null}
  */
@@ -65,10 +98,7 @@ export function mapRatingToScore10(raw) {
   if (typeof raw === 'number') return normalizeRating(raw);
 
   const s = String(raw).trim();
-  if (!s) return null;
-
-  // Skip placeholder ellipsis used in some Notion exports.
-  if (s === '...' || s === '…' || s === '-' || s === '—') return null;
+  if (!s || isRatingSkipValue(s)) return null;
 
   const label = RATING_LABEL_TO_SCORE[s.toLowerCase()];
   if (label != null) return label;

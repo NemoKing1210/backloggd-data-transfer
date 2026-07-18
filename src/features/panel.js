@@ -1,7 +1,15 @@
 import { AUTHOR, REPO_URL, SCRIPT_VERSION, MATCH_DELAY_MS } from '../constants.js';
 import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
-import { loadCurrentUserLibrary } from '../destinations/backloggd/library.js';
+import {
+  libraryHasGame,
+  loadCurrentUserLibrary,
+  probeUserHasLog,
+  rememberLibraryGame,
+} from '../destinations/backloggd/library.js';
 import { matchTransferEntries } from '../destinations/backloggd/match.js';
+import { resolveBackloggdGameByIdOrUrl } from '../destinations/backloggd/search.js';
+import { getCurrentUsername } from '../destinations/backloggd/user.js';
+import { setCachedGameMatch } from '../cache/games.js';
 import { analyzeTransferDocument, statusDisplayLabel } from '../format/analyze.js';
 import { dedupeEntriesByTitle } from '../format/dedupe.js';
 import { createExampleTransferDocument } from '../format/example.js';
@@ -28,7 +36,6 @@ import {
 } from './match-ui.js';
 import { clearReadErrors, clearImportErrors, collectImportIssues, collectReadIssues, renderImportErrors, renderReadErrors } from './errors-ui.js';
 import { clearCsvMapping, readCsvMapping, readCsvValueMaps, renderCsvMapping } from './csv-map-ui.js';
-import { rememberCsvValueMaps } from '../format/csv/value-map-memory.js';
 import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
 import { renderCachePanel, syncCacheTabBadge } from './cache-ui.js';
 import { showToast } from './toast.js';
@@ -49,6 +56,8 @@ export const NAV_BTN_ID = 'bdt-nav-transfer';
 let loadedDoc = null;
 /** @type {import('../destinations/backloggd/library.js').UserLibraryIndex | null} */
 let lastLibrary = null;
+/** @type {import('../destinations/backloggd/match.js').EntryMatchResult[] | null} */
+let lastMatchResults = null;
 /** @type {File | null} */
 let pendingFile = null;
 /** @type {{ headers: string[], rows: Record<string, string>[], rowCount: number } | null} */
@@ -134,6 +143,7 @@ export function ensureNavButton() {
 function resetAnalysisUi(root) {
   loadedDoc = null;
   lastLibrary = null;
+  lastMatchResults = null;
   mappingReady = false;
   reviewReady = false;
   importReady = false;
@@ -264,6 +274,7 @@ function goBackToMapping(root) {
   }
   loadedDoc = null;
   lastLibrary = null;
+  lastMatchResults = null;
   reviewReady = false;
   importReady = false;
   mappingReady = true;
@@ -725,16 +736,8 @@ async function runMatchAndReview(root, doc) {
     }
     reviewReady = true;
     setImportStep(root, 'review');
-    renderMatchTable(root, matchSummary.results, {
-      importExisting: settings.importExisting === true,
-      onSelectionChange(selected) {
-        syncImportButton(root, selected);
-      },
-      onImportExistingChange(enabled) {
-        saveSettings({ ...settings, importExisting: enabled });
-        reloadRuntimeSettings();
-      },
-    });
+    lastMatchResults = matchSummary.results;
+    paintReviewMatchTable(root);
     syncImportButton(root);
     syncCacheTabBadge(root);
     showToast(
@@ -777,6 +780,103 @@ async function runMatchAndReview(root, doc) {
       syncActionButtons(root);
     }
   }
+}
+
+/**
+ * @param {HTMLElement} root
+ */
+function paintReviewMatchTable(root) {
+  if (!lastMatchResults?.length) return;
+  renderMatchTable(root, lastMatchResults, {
+    importExisting: settings.importExisting === true,
+    onSelectionChange(selected) {
+      syncImportButton(root, selected);
+    },
+    onImportExistingChange(enabled) {
+      saveSettings({ ...settings, importExisting: enabled });
+      reloadRuntimeSettings();
+    },
+    onManualGameId(index, raw) {
+      return applyManualGameId(root, index, raw);
+    },
+  });
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {number} index
+ * @param {string} raw
+ */
+async function applyManualGameId(root, index, raw) {
+  if (!loadedDoc || !lastMatchResults) {
+    throw new Error(t.importNeedAnalyze);
+  }
+  const row = lastMatchResults.find((r) => r.index === index);
+  if (!row) {
+    throw new Error(t.importMatchManualIdMissingRow);
+  }
+
+  const hintTitle = entryDisplayTitle(row.entry);
+  const match = await resolveBackloggdGameByIdOrUrl(raw, { hintTitle });
+
+  row.entry.game_id = match.id;
+  if (match.slug) row.entry.slug = match.slug;
+
+  let existing = libraryHasGame(match.id, match.slug, lastLibrary);
+  if (!existing && match.slug) {
+    try {
+      const probe = await probeUserHasLog({
+        gameId: match.id,
+        slug: match.slug,
+        username: getCurrentUsername(),
+      });
+      existing = probe.exists;
+      if (existing) {
+        rememberLibraryGame(lastLibrary, {
+          gameId: match.id,
+          slug: match.slug,
+        });
+      }
+    } catch (_) {
+      /* keep existing=false */
+    }
+  }
+
+  row.status = 'preset';
+  row.match = match;
+  row.existingLog = existing;
+  row.fromCache = false;
+  delete row.error;
+
+  if (hintTitle) {
+    setCachedGameMatch(hintTitle, match);
+  }
+
+  const foundCount = lastMatchResults.filter(
+    (r) => r.status === 'found' || r.status === 'preset',
+  ).length;
+  const notFoundCount = lastMatchResults.filter(
+    (r) => r.status === 'not_found' || r.status === 'error',
+  ).length;
+  const existingCount = lastMatchResults.filter((r) => r.existingLog).length;
+  const analysis = analyzeTransferDocument(loadedDoc, {
+    foundCount,
+    notFoundCount,
+    existingCount,
+  });
+  renderSummary(root, analysis);
+  renderReadErrors(root, collectReadIssues(lastMatchResults));
+  paintReviewMatchTable(root);
+  syncImportButton(root);
+  syncCacheTabBadge(root);
+
+  showToast(
+    fmt(t.importMatchManualIdOk, {
+      title: match.title || hintTitle,
+      id: match.id,
+    }),
+    { type: 'success', title: t.importMatchManualIdOkTitle },
+  );
 }
 
 function formatAccept(format) {
@@ -1018,6 +1118,7 @@ export function openPanel(tab = 'import') {
   pendingFile = null;
   loadedDoc = null;
   lastLibrary = null;
+  lastMatchResults = null;
   csvData = null;
   csvMapping = {};
   csvValueMaps = { status: {}, rating: {}, platform: {} };
@@ -1409,7 +1510,6 @@ export function openPanel(tab = 'import') {
     }
     csvMapping = readCsvMapping(backdrop);
     csvValueMaps = readCsvValueMaps(backdrop);
-    rememberCsvValueMaps(csvValueMaps);
     const built = buildTransferFromCsv({
       rows: csvData.rows,
       mapping: csvMapping,
@@ -1611,6 +1711,7 @@ export function closePanel() {
   pendingFile = null;
   loadedDoc = null;
   lastLibrary = null;
+  lastMatchResults = null;
   csvData = null;
   csvMapping = {};
   csvValueMaps = { status: {}, rating: {}, platform: {} };

@@ -43,13 +43,14 @@ export const TRANSFER_FORMAT_VERSION = 2;
 export const TRANSFER_FILENAME_PREFIX = 'backloggd-transfer';
 
 /**
- * Values for `log.status` on Backloggd (see log create/update POST).
- * Legacy transfer v1 used `played` — normalize to `completed`.
+ * Values for `log.status` on Backloggd (shelves + played-status modal).
+ * `played` ≠ `completed`: Played = “nothing specific”, Completed = main objective beaten.
  */
 export const LOG_STATUS_KEYS = Object.freeze([
   'wishlist',
   'backlog',
   'playing',
+  'played',
   'completed',
   'shelved',
   'abandoned',
@@ -60,6 +61,7 @@ export const LOG_STATUS_LABELS = Object.freeze({
   wishlist: 'Wishlist',
   backlog: 'Backlog',
   playing: 'Playing',
+  played: 'Played',
   completed: 'Completed',
   shelved: 'Shelved',
   abandoned: 'Abandoned',
@@ -82,12 +84,17 @@ export const ALT_STATUS_TO_CANONICAL = Object.freeze({
   dropped: 'abandoned',
   tried: 'retired',
   done: 'completed',
-  played: 'completed',
+  played: 'played',
   completed: 'completed',
-  session: 'playing',
-  infinity: 'playing',
-  infinite: 'playing',
-  endless: 'playing',
+  // Open-ended / genre play styles → Played (“nothing specific”)
+  session: 'played',
+  infinity: 'played',
+  infinite: 'played',
+  endless: 'played',
+  mmorpg: 'played',
+  roguelike: 'played',
+  sandbox: 'played',
+  gacha: 'played',
   // Notion / Plus export labels (case-insensitive keys)
   wishlist: 'wishlist',
   backlog: 'backlog',

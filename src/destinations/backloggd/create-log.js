@@ -162,6 +162,7 @@ function normalizeLogFlags(log) {
         next.is_wishlist = true;
         break;
       case 'completed':
+      case 'played':
       case 'shelved':
       case 'abandoned':
       case 'retired':

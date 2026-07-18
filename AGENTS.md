@@ -59,7 +59,7 @@ backloggd-data-transfer/
 
 1. Match **Backloggd** only at `document-idle`.
 2. Inject a navbar **Transfer** button (`#bdt-nav-transfer`, same slot as Log a Game / Plus) + `GM_registerMenuCommand` → transfer panel.
-3. **Import tab:** user picks JSON → `format/parse` → `destinations/backloggd` (search + create). Default **dry-run** until writes are implemented.
+3. **Import tab:** stepped wizard (file → read/match → import) with history + about tabs; live `POST` for selected matches when logged in.
 4. Prefix UI/storage with `bdt_` / `data-bdt-*` so it does not clash with Backloggd Plus (`blp_`).
 
 Keep `@connect` / `@grant` minimal. Userscript metadata lives in `vite.config.js`.
@@ -71,15 +71,37 @@ Keep `@connect` / `@grant` minimal. Userscript metadata lives in `vite.config.js
 - New destination → `src/destinations/<platform>/` that consumes `TransferDocument`.
 - Do not hand-edit committed `.user.js` / `.meta.js`.
 - After source or metadata changes: `npm run build`.
+- After **user-visible** changes (features, fixes, UI, format): bump version + changelog — see **Releases**.
 - Do not imply affiliation with Backloggd in docs/UI copy.
 - Do not add Notion host matching or in-page Notion export UI.
 
 ## Releases
 
+**Always** bump the version when shipping a user-visible change (feature, bugfix, UI, transfer-format change). Do not leave `package.json` at the old version after such work.
+
+Version source of truth: `package.json` → `version`. That value drives:
+
+- userscript `@version` (via `vite.config.js` + build)
+- in-app `SCRIPT_VERSION` (`src/constants.js` imports `package.json`)
+- CI / `npm run verify:artifacts` freshness of committed install files
+
+Follow [Semantic Versioning](https://semver.org/):
+
+| Bump | When |
+|------|------|
+| **patch** (`0.1.4` → `0.1.5`) | Bug fixes, polish, docs-only that ship in the script, small safe tweaks |
+| **minor** (`0.1.x` → `0.2.0`) | New features, new tabs/flows, format additions that stay backward-compatible |
+| **major** (`0.x` → `1.0.0` / `1.x` → `2.0.0`) | Breaking transfer-format or API changes that require user migration |
+
+Checklist for every release-worthy change:
+
 1. Bump `version` in `package.json`.
-2. `npm run build`.
-3. Update `CHANGELOG.md`.
-4. Refresh README badges if they mention the version.
+2. Add a Keep a Changelog entry at the top of `CHANGELOG.md` (`## [x.y.z] - YYYY-MM-DD` with Added / Changed / Fixed / Removed as needed).
+3. Run `npm run build` so root `backloggd-data-transfer.user.js` and `.meta.js` match `dist/` and embed the new `@version`.
+4. Update `README.md` (and format docs) if they mention the version, status, or new behavior.
+5. If the transfer schema changed, update `docs/transfer-format.md` and bump `TRANSFER_FORMAT_VERSION` in `constants.js` when required.
+
+Do **not** skip the version bump “just this once” for UI/features — userscript managers rely on `@version` / `@updateURL` to pick up updates.
 
 ## Local testing
 
@@ -93,6 +115,7 @@ npm run ci       # build + verify committed artifacts
 ## Do not
 
 - Hand-edit committed install artifacts.
+- Ship user-visible changes without bumping `package.json` `version` and updating `CHANGELOG.md`.
 - Add TypeScript or a frontend framework unless explicitly requested.
 - Expand `@connect` beyond what the import/export paths need.
 - Commit localhost `@updateURL` / `@downloadURL` values.

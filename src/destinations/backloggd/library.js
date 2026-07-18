@@ -1,4 +1,6 @@
+import { LIBRARY_PAGE_DELAY_MS } from '../../constants.js';
 import { gmRequest } from '../../gm.js';
+import { sleepJitter } from '../../utils/delay.js';
 import { backloggdOrigin, backloggdUrl } from './site.js';
 import { getCurrentUsername } from './user.js';
 
@@ -84,6 +86,25 @@ export async function loadCurrentUserLibrary(options = {}) {
       for (const slug of parsed.slugs) slugs.add(slug);
 
       url = parsed.nextUrl;
+      if (url) {
+        await sleepJitter(LIBRARY_PAGE_DELAY_MS, {
+          minFactor: 0.75,
+          maxFactor: 1.8,
+          pauseChance: 0.1,
+          pauseMinMs: 200,
+          pauseMaxMs: 900,
+        });
+      }
+    }
+
+    if (listIndex < LIBRARY_LISTS.length - 1 && !options.shouldCancel?.()) {
+      await sleepJitter(LIBRARY_PAGE_DELAY_MS * 1.4, {
+        minFactor: 0.8,
+        maxFactor: 1.7,
+        pauseChance: 0.15,
+        pauseMinMs: 250,
+        pauseMaxMs: 1100,
+      });
     }
   }
 

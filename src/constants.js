@@ -19,8 +19,10 @@ export const HISTORY_KEY = 'bdt_history';
 export const HISTORY_MAX_ENTRIES = 50;
 export const ROOT_ATTR = 'data-bdt-root';
 export const SCAN_DEBOUNCE_MS = 400;
-/** Delay between Backloggd autocomplete lookups during Read/match. */
-export const MATCH_DELAY_MS = 350;
+/** Base delay between Backloggd autocomplete lookups during Read/match. */
+export const MATCH_DELAY_MS = 450;
+/** Base delay between library page fetches. */
+export const LIBRARY_PAGE_DELAY_MS = 280;
 
 /** Canonical transfer file identity. */
 export const TRANSFER_FORMAT_ID = 'backloggd-transfer';
@@ -76,7 +78,7 @@ export const ALT_STATUS_TO_CANONICAL = Object.freeze({
 
 export const DEFAULT_SETTINGS = {
   uiLocale: 'auto',
-  importDelayMs: 800,
+  importDelayMs: 1000,
   importFormat: 'json',
   /** When false, games already in the user's library stay unchecked by default. */
   importExisting: false,

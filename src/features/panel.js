@@ -748,6 +748,18 @@ export function openPanel(tab = 'import') {
       </header>
       <nav class="bdt-panel__tabs" role="tablist">
         <button type="button" class="bdt-tab" data-bdt-tab="import" role="tab">${escapeHtml(t.tabImport)}</button>
+        <button
+          type="button"
+          class="bdt-tab is-locked"
+          data-bdt-tab="export"
+          data-bdt-tab-locked="true"
+          role="tab"
+          aria-disabled="true"
+          title="${escapeAttr(t.exportSoonBody)}"
+        >
+          ${escapeHtml(t.tabExport)}
+          <span class="bdt-tab__badge bdt-tab__badge--soon">${escapeHtml(t.exportLockedBadge)}</span>
+        </button>
         <button type="button" class="bdt-tab" data-bdt-tab="history" role="tab">
           ${escapeHtml(t.tabHistory)}
           <span class="bdt-tab__badge" data-bdt-history-badge hidden>0</span>
@@ -880,6 +892,20 @@ export function openPanel(tab = 'import') {
                 <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-restart>${escapeHtml(t.importRestart)}</button>
               </div>
             </div>
+          </div>
+        </section>
+        <section class="bdt-tab-panel" data-bdt-panel="export" hidden>
+          <div class="bdt-export-locked">
+            <div class="bdt-export-locked__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
+                <path d="M12 3v11" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M7.5 8.5 12 4l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M5 20h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3 class="bdt-export-locked__title">${escapeHtml(t.exportLockedTitle)}</h3>
+            <p class="bdt-export-locked__text">${escapeHtml(t.exportLockedLead)}</p>
+            <span class="bdt-export-locked__badge">${escapeHtml(t.exportLockedBadge)}</span>
           </div>
         </section>
         <section class="bdt-tab-panel" data-bdt-panel="history" hidden></section>
@@ -1259,6 +1285,18 @@ export function openPanel(tab = 'import') {
 }
 
 function selectTab(backdrop, tab) {
+  const tabBtn = backdrop.querySelector(`[data-bdt-tab="${tab}"]`);
+  if (
+    tabBtn?.getAttribute('data-bdt-tab-locked') === 'true' ||
+    tabBtn?.classList.contains('is-locked')
+  ) {
+    showToast(t.exportSoonBody, {
+      type: 'warning',
+      title: t.exportSoonTitle,
+    });
+    return;
+  }
+
   backdrop.querySelectorAll('[data-bdt-tab]').forEach((btn) => {
     btn.classList.toggle('is-active', btn.getAttribute('data-bdt-tab') === tab);
   });

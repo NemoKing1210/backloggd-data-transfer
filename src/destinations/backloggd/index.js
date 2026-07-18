@@ -1,5 +1,5 @@
 import { entryDisplayTitle } from '../../format/schema.js';
-import { sleep } from '../../utils/download.js';
+import { sleepJitter } from '../../utils/delay.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { createBackloggdLog } from './create-log.js';
 import { searchBackloggdGame } from './search.js';
@@ -88,7 +88,7 @@ export async function importTransferToBackloggd(doc, options = {}) {
       };
       results.push(result);
       options.onProgress?.({ index, total, entry, result });
-      if (delayMs) await sleep(delayMs);
+      if (delayMs) await sleepJitter(delayMs);
       continue;
     }
 
@@ -100,7 +100,7 @@ export async function importTransferToBackloggd(doc, options = {}) {
       };
       results.push(result);
       options.onProgress?.({ index, total, entry, result });
-      if (delayMs) await sleep(delayMs);
+      if (delayMs) await sleepJitter(delayMs);
       continue;
     }
 
@@ -113,7 +113,13 @@ export async function importTransferToBackloggd(doc, options = {}) {
 
     // Brief pause + one retry on rate limit.
     if (!result.ok && result.status === 429) {
-      await sleep(Math.max(delayMs, 3000));
+      await sleepJitter(Math.max(delayMs * 3, 3500), {
+        minFactor: 0.9,
+        maxFactor: 1.4,
+        pauseChance: 0.25,
+        pauseMinMs: 800,
+        pauseMaxMs: 2500,
+      });
       result = await createBackloggdLog(entry, {
         dryRun,
         resolved,
@@ -124,7 +130,7 @@ export async function importTransferToBackloggd(doc, options = {}) {
 
     results.push(result);
     options.onProgress?.({ index, total, entry, result });
-    if (delayMs && index < total - 1) await sleep(delayMs);
+    if (delayMs && index < total - 1) await sleepJitter(delayMs);
   }
 
   const okCount = results.filter((r) => r.ok).length;

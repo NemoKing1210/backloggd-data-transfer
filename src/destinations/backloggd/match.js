@@ -1,6 +1,6 @@
 import { MATCH_DELAY_MS } from '../../constants.js';
 import { entryDisplayTitle } from '../../format/schema.js';
-import { sleep } from '../../utils/download.js';
+import { sleepJitter } from '../../utils/delay.js';
 import { libraryHasGame } from './library.js';
 import { searchBackloggdGame } from './search.js';
 import { backloggdUrl } from './site.js';
@@ -104,7 +104,7 @@ export async function matchTransferEntries(doc, options = {}) {
     options.onProgress?.({ index, total, entry, result });
 
     if (delayMs && index < total - 1 && result.status !== 'preset') {
-      await sleep(delayMs);
+      await sleepJitter(delayMs);
     }
   }
 

@@ -21,6 +21,8 @@ import {
 
 /**
  * @typedef {object} TransferLog
+ * @property {string|number|null} [id]  Existing Backloggd log id (empty = create)
+ * @property {string} [last_edited_at]
  * @property {boolean} game_liked
  * @property {boolean} is_play
  * @property {boolean} is_playing

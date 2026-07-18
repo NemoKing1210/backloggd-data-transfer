@@ -241,7 +241,8 @@ export async function probeUserHasLog(input) {
  *   exists: boolean,
  *   logId: number | null,
  *   logCount: number,
- *   logs: { id: number | null, title: string }[],
+ *   gameStatus: string | null,
+ *   logs: object[],
  *   logUrl: string | null,
  * }>}
  */
@@ -255,7 +256,14 @@ export async function probeUserLogDetails(input) {
     Number.isFinite(gameIdRaw) && gameIdRaw > 0 ? gameIdRaw : null;
 
   if (!username || !slug) {
-    return { exists: false, logId: null, logCount: 0, logs: [], logUrl: null };
+    return {
+      exists: false,
+      logId: null,
+      logCount: 0,
+      gameStatus: null,
+      logs: [],
+      logUrl: null,
+    };
   }
 
   const logUrl = backloggdUrl(
@@ -264,14 +272,22 @@ export async function probeUserLogDetails(input) {
 
   const res = await fetchHtmlResponse(logUrl);
   if (!res.ok || isSoftNotFoundPage(res.html)) {
-    return { exists: false, logId: null, logCount: 0, logs: [], logUrl };
+    return {
+      exists: false,
+      logId: null,
+      logCount: 0,
+      gameStatus: null,
+      logs: [],
+      logUrl,
+    };
   }
 
-  const parsed = parseUserLogsDetail(res.html, gameId);
+  const parsed = parseUserLogsDetail(res.html, gameId, { username });
   return {
     exists: parsed.exists,
     logId: parsed.logId,
     logCount: parsed.logCount,
+    gameStatus: parsed.gameStatus,
     logs: parsed.logs,
     logUrl,
   };
@@ -280,27 +296,42 @@ export async function probeUserLogDetails(input) {
 /**
  * @param {string} html
  * @param {number | null} [gameId]
+ * @param {{ username?: string }} [options]
  * @returns {{
  *   exists: boolean,
  *   logId: number | null,
  *   logCount: number,
- *   logs: { id: number | null, title: string }[],
+ *   gameStatus: string | null,
+ *   logs: {
+ *     id: number | null,
+ *     title: string,
+ *     rating: number | null,
+ *     platform: string | null,
+ *     badges: string[],
+ *     startDate: string | null,
+ *     finishDate: string | null,
+ *     datesLabel: string | null,
+ *     gameId: number | null,
+ *   }[],
  * }}
  */
-function parseUserLogsDetail(html, gameId = null) {
+function parseUserLogsDetail(html, gameId = null, options = {}) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  /** @type {{ id: number | null, title: string }[]} */
+  /** @type {ReturnType<typeof parseUserLogsDetail>['logs']} */
   const logs = [];
   /** @type {Set<string>} */
   const seenKeys = new Set();
 
-  const pushLog = (id, title) => {
-    const cleanTitle = String(title || '')
+  /**
+   * @param {Partial<ReturnType<typeof parseUserLogsDetail>['logs'][number]> & { id?: number | null, title?: string }} entry
+   */
+  const pushLog = (entry) => {
+    const cleanTitle = String(entry.title || '')
       .replace(/\s+/g, ' ')
       .trim();
     const idNum =
-      id != null && Number.isFinite(Number(id)) && Number(id) > 0
-        ? Number(id)
+      entry.id != null && Number.isFinite(Number(entry.id)) && Number(entry.id) > 0
+        ? Number(entry.id)
         : null;
     const key = idNum != null ? `id:${idNum}` : `t:${cleanTitle.toLowerCase()}`;
     if (seenKeys.has(key)) return;
@@ -309,104 +340,102 @@ function parseUserLogsDetail(html, gameId = null) {
     logs.push({
       id: idNum,
       title: cleanTitle || (idNum != null ? `Log #${idNum}` : 'Log'),
+      rating: entry.rating ?? null,
+      platform: entry.platform ?? null,
+      badges: Array.isArray(entry.badges) ? entry.badges : [],
+      startDate: entry.startDate ?? null,
+      finishDate: entry.finishDate ?? null,
+      datesLabel: entry.datesLabel ?? null,
+      gameId: entry.gameId ?? null,
     });
   };
 
-  // Switcher / editor list (legacy class names still used after the logs rename).
-  doc
-    .querySelectorAll(
-      '.playthrough-option, .log-option, [data-playthrough-id], [data-log-id]',
-    )
-    .forEach((el) => {
-      const id =
-        el.getAttribute('data-playthrough-id') ||
-        el.getAttribute('data-log-id') ||
-        el.getAttribute('data-id') ||
-        el.getAttribute('playthrough_id') ||
-        el.getAttribute('log_id');
-      const titleEl =
-        el.querySelector(
-          '.playthrough-option-title, .log-option-title, .title, .name',
-        ) || el;
-      pushLog(id, titleEl.textContent);
-    });
+  const gameStatus = parseGameStatusFromLogsPage(doc);
 
-  doc.querySelectorAll('.playthrough-option-title, .log-option-title').forEach((el) => {
-    const parent = el.closest(
-      '.playthrough-option, .log-option, [data-playthrough-id], [data-log-id], li, button, a',
-    );
-    const id =
-      parent?.getAttribute?.('data-playthrough-id') ||
-      parent?.getAttribute?.('data-log-id') ||
-      parent?.getAttribute?.('data-id') ||
-      null;
-    pushLog(id, el.textContent);
+  // 1) Profile logs page: `.playthrough-view` (+ sibling `.playthrough-dates`).
+  doc.querySelectorAll('.playthrough-view').forEach((view) => {
+    pushLog(parsePlaythroughView(view, gameId));
   });
 
-  // Form fields: playthroughs[n][id] / playthroughs[n][title]
-  /** @type {Map<string, { id: number | null, title: string }>} */
-  const fromForm = new Map();
-  doc.querySelectorAll('input[name^="playthroughs["]').forEach((input) => {
-    const name = input.getAttribute('name') || '';
-    const match = name.match(/^playthroughs\[(\d+|-\d+)\]\[(id|title)\]$/i);
-    if (!match) return;
-    const idx = match[1];
-    const field = match[2].toLowerCase();
-    const row = fromForm.get(idx) || { id: null, title: '' };
-    const value = String(
-      input.getAttribute('value') ?? /** @type {HTMLInputElement} */ (input).value ?? '',
-    ).trim();
-    if (field === 'id') {
-      const n = Number(value);
-      row.id = Number.isFinite(n) && n > 0 ? n : null;
-    } else {
-      row.title = value;
-    }
-    fromForm.set(idx, row);
-  });
-  for (const row of fromForm.values()) {
-    if (row.id != null || row.title) pushLog(row.id, row.title || 'Log');
+  // Unique ids from open/delete buttons if a view lacked structure.
+  if (!logs.length) {
+    doc
+      .querySelectorAll(
+        'button.open-log[playthrough_id], button.delete-log[playthrough_id]',
+      )
+      .forEach((btn) => {
+        const gId = Number(btn.getAttribute('game_id'));
+        pushLog({
+          id: Number(btn.getAttribute('playthrough_id')),
+          title: 'Log',
+          gameId: Number.isFinite(gId) && gId > 0 ? gId : gameId,
+        });
+      });
   }
 
-  // Public multi-log profile page: titled sections under the game header.
-  if (logs.length <= 1) {
-    const mainTitle = String(
-      doc.querySelector('h1, .game-name, #game-title, .game-title')?.textContent ||
-        '',
-    )
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toLowerCase();
-    /** @type {string[]} */
-    const sectionTitles = [];
-    const candidates = [
-      ...doc.querySelectorAll(
-        '#logs-container h3, #user-logs h3, .user-logs h3, .log-section h3, .playthrough-section h3, .journal-section > h3',
-      ),
-    ];
-    // Broader fallback only when a dedicated logs container is absent.
-    if (!candidates.length) {
-      candidates.push(
-        ...doc.querySelectorAll('.col-md-8 h3, main .row h3'),
-      );
-    }
-    for (const el of candidates) {
-      const text = String(el.textContent || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!text || text.length > 80) continue;
-      if (mainTitle && text.toLowerCase() === mainTitle) continue;
-      if (
-        /^(log status|rating|days in journal|last played|first played|platforms?|display|journal|game status|reviews?|comments?)$/i.test(
-          text,
-        )
-      ) {
-        continue;
+  // 2) Full editor modal: switcher tabs / time-tracker rows.
+  if (!logs.length) {
+    doc
+      .querySelectorAll(
+        '#playthrough-container [playthrough_id], #playthrough-container button[playthrough_id], button.btn-nav[playthrough_id]',
+      )
+      .forEach((el) => {
+        const id = el.getAttribute('playthrough_id');
+        const titleEl = el.querySelector('.playthrough-option-title');
+        pushLog({
+          id: Number(id),
+          title: titleEl?.textContent || el.textContent || 'Log',
+          gameId,
+        });
+      });
+  }
+
+  if (!logs.length) {
+    doc
+      .querySelectorAll(
+        '#time-played-entries-container .time-entry-row[playthrough_id], #time-played-entries-container [playthrough_id]',
+      )
+      .forEach((el) => {
+        const id = el.getAttribute('playthrough_id');
+        const titleEl = el.querySelector(
+          '.playthrough-title, .playthrough-option-title',
+        );
+        pushLog({
+          id: Number(id),
+          title: titleEl?.textContent || 'Log',
+          gameId,
+        });
+      });
+  }
+
+  // 3) Form fields from older/partial markup.
+  if (!logs.length) {
+    /** @type {Map<string, { id: number | null, title: string }>} */
+    const fromForm = new Map();
+    doc.querySelectorAll('input[name^="playthroughs["]').forEach((input) => {
+      const name = input.getAttribute('name') || '';
+      const match = name.match(/^playthroughs\[(\d+|-\d+)\]\[(id|title)\]$/i);
+      if (!match) return;
+      const idx = match[1];
+      const field = match[2].toLowerCase();
+      const row = fromForm.get(idx) || { id: null, title: '' };
+      const value = String(
+        input.getAttribute('value') ??
+          /** @type {HTMLInputElement} */ (input).value ??
+          '',
+      ).trim();
+      if (field === 'id') {
+        const n = Number(value);
+        row.id = Number.isFinite(n) && n > 0 ? n : null;
+      } else {
+        row.title = value;
       }
-      sectionTitles.push(text);
-    }
-    if (sectionTitles.length >= 2) {
-      for (const title of sectionTitles) pushLog(null, title);
+      fromForm.set(idx, row);
+    });
+    for (const row of fromForm.values()) {
+      if (row.id != null || row.title) {
+        pushLog({ id: row.id, title: row.title || 'Log', gameId });
+      }
     }
   }
 
@@ -414,20 +443,43 @@ function parseUserLogsDetail(html, gameId = null) {
   const logIdInput =
     doc.querySelector('input[name="log[id]"]') ||
     doc.querySelector('#log_id') ||
-    doc.querySelector('[name="log[id]"]');
+    doc.querySelector('[name="log[id]"]') ||
+    doc.querySelector('input#log_id');
   const logIdRaw = logIdInput?.getAttribute?.('value') ?? logIdInput?.value;
   if (logIdRaw != null && String(logIdRaw).trim() !== '') {
     const n = Number(logIdRaw);
     if (Number.isFinite(n) && n > 0) logId = n;
   }
 
+  const currentPt = doc.querySelector(
+    '#current_playthrough, input[name="current_playthrough"]',
+  );
+  const currentPtRaw = currentPt?.getAttribute?.('value') ?? currentPt?.value;
+  const currentPtId = Number(currentPtRaw);
+  if (
+    logs.length === 0 &&
+    Number.isFinite(currentPtId) &&
+    currentPtId > 0
+  ) {
+    pushLog({
+      id: currentPtId,
+      title: doc.querySelector('#log-title-field')?.value || 'Log',
+      gameId,
+    });
+  }
+
+  const hasLogsPage = Boolean(
+    doc.querySelector(
+      '.playthrough-view, .game-log-view, #logs-display-nav, button.log-editor-btn',
+    ),
+  );
   const hasEditor = Boolean(
     doc.querySelector(
-      '#log-editor-full, #playthrough-container, .playthrough-option-title, .journal_entry, .log-option-title',
+      '#log-editor-full, #playthrough-container, #journal-game-modal, #current_playthrough',
     ),
   );
 
-  let exists = logs.length > 0 || logId != null || hasEditor;
+  let exists = logs.length > 0 || logId != null || hasEditor || hasLogsPage;
   if (!exists && gameId != null) {
     const cover = doc.querySelector(
       `.game-cover[game_id="${gameId}"], [game_id="${gameId}"]`,
@@ -437,15 +489,178 @@ function parseUserLogsDetail(html, gameId = null) {
 
   const logCount = Math.max(logs.length, exists ? 1 : 0);
   if (exists && logs.length === 0) {
-    logs.push({ id: logId, title: 'Log' });
+    logs.push({
+      id: logId,
+      title: 'Log',
+      rating: null,
+      platform: null,
+      badges: [],
+      startDate: null,
+      finishDate: null,
+      datesLabel: null,
+      gameId,
+    });
   }
 
   return {
     exists,
     logId,
     logCount,
+    gameStatus,
     logs,
   };
+}
+
+/**
+ * @param {Element} view
+ * @param {number | null} fallbackGameId
+ */
+function parsePlaythroughView(view, fallbackGameId) {
+  const btn =
+    view.querySelector(
+      'button.open-log[playthrough_id], button.delete-log[playthrough_id], [playthrough_id]',
+    ) || null;
+  const idRaw = Number(btn?.getAttribute('playthrough_id'));
+  const id =
+    Number.isFinite(idRaw) && idRaw > 0 ? idRaw : null;
+  const gRaw = Number(
+    btn?.getAttribute('game_id') ||
+      view.querySelector('[game_id]')?.getAttribute('game_id'),
+  );
+  const entryGameId =
+    Number.isFinite(gRaw) && gRaw > 0 ? gRaw : fallbackGameId;
+
+  const titleEl =
+    view.querySelector('h3.mb-1') ||
+    view.querySelector(':scope > .col-12 h3, :scope .col-12.my-auto > h3') ||
+    view.querySelector('h3');
+  const title = String(titleEl?.textContent || 'Log')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const rating = parseStarRating(view);
+  const platform =
+    String(
+      view.querySelector('a.secondary-link, a[href*="played_platform"]')
+        ?.textContent || '',
+    )
+      .replace(/\s+/g, ' ')
+      .trim() || null;
+
+  /** @type {string[]} */
+  const badges = [];
+  view.querySelectorAll('p.time-played').forEach((el) => {
+    const text = String(el.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) return;
+    if (!badges.includes(text)) badges.push(text);
+  });
+
+  const row =
+    view.closest('.row.mb-4') ||
+    view.parentElement?.closest?.('.row') ||
+    null;
+  const datesCol = row?.querySelector('.playthrough-dates') || null;
+  const dates = parsePlaythroughDates(datesCol);
+
+  return {
+    id,
+    title,
+    rating,
+    platform,
+    badges,
+    startDate: dates.startDate,
+    finishDate: dates.finishDate,
+    datesLabel: dates.datesLabel,
+    gameId: entryGameId,
+  };
+}
+
+/**
+ * @param {Element} root
+ * @returns {number | null}
+ */
+function parseStarRating(root) {
+  const stars = root.querySelector('.stars-top');
+  if (!stars) return null;
+  const style = stars.getAttribute('style') || '';
+  const match = style.match(/width\s*:\s*([\d.]+)\s*%/i);
+  if (!match) return null;
+  const pct = Number(match[1]);
+  if (!Number.isFinite(pct) || pct <= 0) return null;
+  // Backloggd half-star UI: 10% ≈ ½★ ≈ rating 1 on the 1–10 scale.
+  return Math.max(1, Math.min(10, Math.round(pct / 10)));
+}
+
+/**
+ * @param {Element | null | undefined} datesCol
+ */
+function parsePlaythroughDates(datesCol) {
+  if (!datesCol) {
+    return { startDate: null, finishDate: null, datesLabel: null };
+  }
+
+  const empty = String(datesCol.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/no play sessions logged/i.test(empty) && !datesCol.querySelector('.playdate-view')) {
+    return {
+      startDate: null,
+      finishDate: null,
+      datesLabel: 'No play sessions logged',
+    };
+  }
+
+  /** @type {string | null} */
+  let startDate = null;
+  /** @type {string | null} */
+  let finishDate = null;
+  const month = String(
+    datesCol.querySelector('.playdate-month h3')?.textContent || '',
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  datesCol.querySelectorAll('.playdate-view').forEach((block) => {
+    const dayNums = [...block.querySelectorAll('.number-date h4')]
+      .map((el) => String(el.textContent || '').trim())
+      .filter((t) => /^\d{1,2}$/.test(t));
+    const label = String(
+      block.querySelector('.subtitle-text, p.subtitle-text')?.textContent || '',
+    )
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+    if (!dayNums.length) return;
+    const day = dayNums[dayNums.length - 1];
+    const composed = month ? `${month} ${day}` : day;
+    if (/start/.test(label)) startDate = composed;
+    else if (/finish|finished|complete/.test(label)) finishDate = composed;
+    else if (!startDate) startDate = composed;
+    else if (!finishDate) finishDate = composed;
+  });
+
+  /** @type {string | null} */
+  let datesLabel = null;
+  if (startDate && finishDate) datesLabel = `${startDate} → ${finishDate}`;
+  else if (startDate) datesLabel = startDate;
+  else if (finishDate) datesLabel = finishDate;
+  else if (month) datesLabel = month;
+
+  return { startDate, finishDate, datesLabel };
+}
+
+/**
+ * @param {Document} doc
+ * @returns {string | null}
+ */
+function parseGameStatusFromLogsPage(doc) {
+  const current = doc.querySelector('#log-status .current p, #log-status .col-3.current p');
+  const text = String(current?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text || null;
 }
 
 /**

@@ -4,13 +4,27 @@ import { loadCurrentUserLibrary, probeUserLogDetails } from './library.js';
 import { getCurrentUsername } from './user.js';
 
 /**
+ * @typedef {object} MultiLogEntry
+ * @property {number | null} id
+ * @property {string} title
+ * @property {number | null} rating
+ * @property {string | null} platform
+ * @property {string[]} badges
+ * @property {string | null} startDate
+ * @property {string | null} finishDate
+ * @property {string | null} datesLabel
+ * @property {number | null} gameId
+ */
+
+/**
  * @typedef {object} MultiLogGame
  * @property {number | null} gameId
  * @property {string} slug
  * @property {string} title
  * @property {string | null} coverUrl
  * @property {number} logCount
- * @property {{ id: number | null, title: string }[]} logs
+ * @property {string | null} gameStatus
+ * @property {MultiLogEntry[]} logs
  * @property {string | null} logUrl
  */
 
@@ -108,6 +122,7 @@ export async function scanMultiLogGames(options = {}) {
           title: game.title || game.slug,
           coverUrl: game.coverUrl,
           logCount: detail.logCount,
+          gameStatus: detail.gameStatus || null,
           logs: detail.logs,
           logUrl: detail.logUrl,
         });

@@ -8,6 +8,7 @@ import { escapeAttr, escapeHtml } from '../utils/html.js';
 import { showToast } from './toast.js';
 
 /** @typedef {import('../destinations/backloggd/multi-logs.js').MultiLogGame} MultiLogGame */
+/** @typedef {import('../destinations/backloggd/multi-logs.js').MultiLogEntry} MultiLogEntry */
 
 /** @type {'idle' | 'scanning' | 'done' | 'error'} */
 let cleanupPhase = 'idle';
@@ -25,6 +26,8 @@ let scanCancelled = false;
 /** @type {'count' | 'title'} */
 let sortMode = 'count';
 let searchQuery = '';
+/** @type {string | null} */
+let expandedSlug = null;
 
 /**
  * Render the Cleanup tab (multi-log games).
@@ -306,6 +309,7 @@ function renderBody(visible) {
  * @param {MultiLogGame} game
  */
 function renderGameCard(game) {
+  const open = expandedSlug === game.slug;
   const cover = game.coverUrl
     ? `<img class="bdt-cleanup-card__cover" src="${escapeAttr(game.coverUrl)}" alt="" loading="lazy" decoding="async" />`
     : `<span class="bdt-cleanup-card__cover bdt-cleanup-card__cover--empty" aria-hidden="true"><i class="fa-solid fa-gamepad"></i></span>`;
@@ -335,42 +339,138 @@ function renderGameCard(game) {
       : '';
 
   return `
-    <article class="bdt-cleanup-card" data-bdt-cleanup-slug="${escapeAttr(game.slug)}">
-      <a class="bdt-cleanup-card__media" href="${escapeAttr(logUrl)}" target="_blank" rel="noopener noreferrer">
-        ${cover}
-        <span class="bdt-cleanup-card__count" title="${escapeAttr(
-          fmt(t.cleanupLogCountTitle, { count: game.logCount }),
-        )}">${escapeHtml(String(game.logCount))}</span>
-      </a>
-      <div class="bdt-cleanup-card__body">
-        <div class="bdt-cleanup-card__top">
-          <h4 class="bdt-cleanup-card__title">
-            <a href="${escapeAttr(logUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(game.title)}</a>
-          </h4>
-          <span class="bdt-cleanup-card__badge">${escapeHtml(
-            fmt(t.cleanupLogCount, { count: game.logCount }),
-          )}</span>
+    <article
+      class="bdt-cleanup-card${open ? ' is-open' : ''}"
+      data-bdt-cleanup-slug="${escapeAttr(game.slug)}"
+      data-bdt-cleanup-card
+    >
+      <div class="bdt-cleanup-card__main" data-bdt-cleanup-toggle>
+        <div class="bdt-cleanup-card__media" aria-hidden="true">
+          ${cover}
+          <span class="bdt-cleanup-card__count" title="${escapeAttr(
+            fmt(t.cleanupLogCountTitle, { count: game.logCount }),
+          )}">${escapeHtml(String(game.logCount))}</span>
         </div>
-        <div class="bdt-cleanup-card__logs">${logChips}${more}</div>
-        <div class="bdt-cleanup-card__actions">
-          <a
-            class="bdt-btn bdt-btn--primary bdt-btn--sm"
-            href="${escapeAttr(logUrl)}"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i>
-            ${escapeHtml(t.cleanupOpenLogs)}
-          </a>
-          <button
-            type="button"
-            class="bdt-btn bdt-btn--ghost bdt-btn--sm"
-            data-bdt-cleanup-hide="${escapeAttr(game.slug)}"
-          >${escapeHtml(t.cleanupHide)}</button>
+        <div class="bdt-cleanup-card__body">
+          <div class="bdt-cleanup-card__top">
+            <h4 class="bdt-cleanup-card__title">${escapeHtml(game.title)}</h4>
+            <span class="bdt-cleanup-card__badge">${escapeHtml(
+              fmt(t.cleanupLogCount, { count: game.logCount }),
+            )}</span>
+          </div>
+          ${
+            game.gameStatus
+              ? `<p class="bdt-cleanup-card__status">${escapeHtml(
+                  fmt(t.cleanupGameStatus, { status: game.gameStatus }),
+                )}</p>`
+              : ''
+          }
+          <div class="bdt-cleanup-card__logs">${logChips}${more}</div>
+          <div class="bdt-cleanup-card__actions">
+            <button
+              type="button"
+              class="bdt-btn bdt-btn--primary bdt-btn--sm"
+              data-bdt-cleanup-toggle-btn
+              aria-expanded="${open ? 'true' : 'false'}"
+            >
+              ${escapeHtml(open ? t.cleanupCollapse : t.cleanupExpand)}
+            </button>
+            <a
+              class="bdt-btn bdt-btn--ghost bdt-btn--sm"
+              href="${escapeAttr(logUrl)}"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-bdt-cleanup-stop
+            >
+              <svg class="bdt-btn__icon" viewBox="0 0 24 24" width="12" height="12" fill="none" aria-hidden="true">
+                <path
+                  d="M14 4h6v6M10 14L20 4M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              ${escapeHtml(t.cleanupOpenLogs)}
+            </a>
+            <button
+              type="button"
+              class="bdt-btn bdt-btn--ghost bdt-btn--sm"
+              data-bdt-cleanup-hide="${escapeAttr(game.slug)}"
+              data-bdt-cleanup-stop
+            >${escapeHtml(t.cleanupHide)}</button>
+          </div>
+        </div>
+        <span class="bdt-cleanup-card__chevron" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+            <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+      </div>
+      <div class="bdt-cleanup-card__drawer" ${open ? '' : 'hidden'}>
+        <div class="bdt-cleanup-drawer__head">
+          <p class="bdt-cleanup-drawer__title">${escapeHtml(
+            fmt(t.cleanupDrawerTitle, { count: game.logs.length }),
+          )}</p>
+          <p class="bdt-cleanup-drawer__hint">${escapeHtml(t.cleanupDrawerHint)}</p>
+        </div>
+        <div class="bdt-cleanup-loglist">
+          ${game.logs.map((log, index) => renderLogRow(log, index)).join('')}
         </div>
       </div>
     </article>
   `;
+}
+
+/**
+ * @param {MultiLogEntry} log
+ * @param {number} index
+ */
+function renderLogRow(log, index) {
+  const meta = [];
+  if (log.rating != null) {
+    meta.push(fmt(t.cleanupLogRating, { rating: formatRating(log.rating) }));
+  }
+  if (log.platform) meta.push(log.platform);
+  if (log.datesLabel) meta.push(log.datesLabel);
+  else if (log.startDate || log.finishDate) {
+    meta.push([log.startDate, log.finishDate].filter(Boolean).join(' → '));
+  }
+
+  return `
+    <div class="bdt-cleanup-log">
+      <div class="bdt-cleanup-log__main">
+        <div class="bdt-cleanup-log__index">${escapeHtml(String(index + 1))}</div>
+        <div class="bdt-cleanup-log__body">
+          <p class="bdt-cleanup-log__title">${escapeHtml(log.title || 'Log')}</p>
+          ${
+            meta.length
+              ? `<p class="bdt-cleanup-log__meta">${escapeHtml(meta.join(' · '))}</p>`
+              : `<p class="bdt-cleanup-log__meta">${escapeHtml(t.cleanupLogNoMeta)}</p>`
+          }
+          ${
+            (log.badges || []).length
+              ? `<div class="bdt-cleanup-log__badges">${log.badges
+                  .map(
+                    (b) =>
+                      `<span class="bdt-cleanup-chip">${escapeHtml(b)}</span>`,
+                  )
+                  .join('')}</div>`
+              : ''
+          }
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * @param {number} rating
+ */
+function formatRating(rating) {
+  const n = Number(rating);
+  if (!Number.isFinite(n)) return String(rating);
+  return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
 /**
@@ -420,16 +520,34 @@ function bindCleanupEvents(root, panel) {
   });
 
   panel.querySelectorAll('[data-bdt-cleanup-hide]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const slug = btn.getAttribute('data-bdt-cleanup-hide');
       if (!slug) return;
       hiddenSlugs.add(slug);
+      if (expandedSlug === slug) expandedSlug = null;
       renderCleanupPanel(root);
       showToast(t.cleanupHiddenToast, {
         type: 'success',
         title: t.cleanupHide,
       });
     });
+  });
+
+  panel.querySelectorAll('[data-bdt-cleanup-card]').forEach((card) => {
+    const slug = card.getAttribute('data-bdt-cleanup-slug');
+    if (!slug) return;
+
+    card
+      .querySelector('[data-bdt-cleanup-toggle]')
+      ?.addEventListener('click', (event) => {
+        const target = /** @type {HTMLElement} */ (event.target);
+        if (target.closest('[data-bdt-cleanup-stop]')) return;
+        event.preventDefault();
+        expandedSlug = expandedSlug === slug ? null : slug;
+        renderCleanupPanel(root);
+      });
   });
 }
 
@@ -450,6 +568,7 @@ async function startCleanupScan(root) {
   lastError = null;
   lastUsername = getCurrentUsername() || lastUsername;
   searchQuery = '';
+  expandedSlug = null;
   renderCleanupPanel(root);
 
   try {

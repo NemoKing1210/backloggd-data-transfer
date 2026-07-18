@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-07-18
+
+### Changed
+
+- Log tab title uses the platform name again when available; falls back to `Log`.
+
+## [0.6.1] - 2026-07-18
+
+### Removed
+
+- Cleanup in-panel Delete action (open the game on Backloggd to remove logs).
+
+## [0.6.0] - 2026-07-18
+
+### Added
+
+- Cleanup cards expand to list each log with rating, platform, dates/badges.
+
+## [0.5.6] - 2026-07-18
+
+### Fixed
+
+- Cleanup “Open logs” button: replace missing `fa-arrow-up-right-from-square` with an inline SVG.
+
+## [0.5.5] - 2026-07-18
+
+### Fixed
+
+- Cleanup multi-log detection: count `.playthrough-view` blocks / `playthrough_id` on the profile logs page (not editor-only markup).
+
+## [0.5.4] - 2026-07-18
+
+### Fixed
+
+- Cleanup multi-log count: stop treating profile chrome (“username”, “No play sessions logged”, months) as extra logs; prefer `#playthrough-container [playthrough_id]`.
+
 ## [0.5.3] - 2026-07-18
 
 ### Fixed

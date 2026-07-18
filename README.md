@@ -3,13 +3,13 @@
 [![CI](https://github.com/NemoKing1210/backloggd-data-transfer/actions/workflows/ci.yml/badge.svg)](https://github.com/NemoKing1210/backloggd-data-transfer/actions/workflows/ci.yml)
 [![Install userscript](https://img.shields.io/badge/Install-userscript-3db89a?style=for-the-badge)](https://raw.githubusercontent.com/NemoKing1210/backloggd-data-transfer/main/backloggd-data-transfer.user.js)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.5.3-green?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.2-green?style=for-the-badge)](CHANGELOG.md)
 
 Userscript that **imports game logs into [Backloggd](https://www.backloggd.com)** from other platforms via a **unified transfer JSON** file. Backloggd has no native import/export.
 
 Compatible with [Tampermonkey](https://www.tampermonkey.net/), [Violentmonkey](https://violentmonkey.github.io/), [Greasemonkey](https://www.greasespot.net/), [ScriptCat](https://scriptcat.org/), and similar managers.
 
-> **Status:** early (`0.5.3`). Runs on Backloggd only. Transfer format **v2** mirrors the native log POST body. Import and multi-log cleanup are live; full library export is next.
+> **Status:** early (`0.6.1`). Runs on Backloggd only. Transfer format **v2** mirrors the native log POST body. Import and multi-log cleanup are live; full library export is next.
 
 
 Companion to [Backloggd Plus](https://github.com/NemoKing1210/backloggd-plus) (enrichment UI). Not affiliated with Backloggd.

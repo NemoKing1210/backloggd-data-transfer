@@ -38,7 +38,7 @@ import { mapPlatformToBackloggd } from './platforms.js';
 
 /**
  * @typedef {object} TransferPlaythrough
- * @property {string} title           Log tab name; default "Log"
+ * @property {string} title           Log tab name; platform label or "Log"
  * @property {number|null} rating     Backloggd 1–10 half-star scale
  * @property {string} review
  * @property {boolean} review_spoilers
@@ -276,7 +276,7 @@ export function migrateV1Entry(raw) {
     },
     playthroughs: [
       {
-        title: 'Log',
+        title: resolvedPlatform?.name || 'Log',
         platform: resolvedPlatform?.id ?? null,
         rating: raw.rating,
         review: raw.review || '',

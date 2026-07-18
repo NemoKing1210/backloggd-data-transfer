@@ -211,6 +211,7 @@ export function buildTransferFromCsv(input) {
       platformMap,
     );
     const platformId = resolvedPlatform?.id ?? null;
+    const platformLabel = resolvedPlatform?.name || 'Log';
     const start = cell(row, mapping.start_date);
     const finish = cell(row, mapping.finish_date);
     const review = cell(row, mapping.review);
@@ -236,7 +237,7 @@ export function buildTransferFromCsv(input) {
       },
       playthroughs: [
         {
-          title: 'Log',
+          title: platformLabel,
           platform: platformId,
           rating,
           review,

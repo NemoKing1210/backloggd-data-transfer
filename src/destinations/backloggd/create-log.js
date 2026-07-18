@@ -1,5 +1,5 @@
 import { entryDisplayTitle, primaryPlaythrough } from '../../format/schema.js';
-import { mapPlatformToBackloggd } from '../../format/platforms.js';
+import { platformByIdOrName } from '../../format/platforms.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { backloggdUrl } from './site.js';
 
@@ -121,14 +121,15 @@ function resolveDateSessions(entry, pt) {
 }
 
 /**
- * Default log tab is "Log". Older imports mistakenly put the platform name here.
+ * Log tab title: platform name when known, otherwise "Log".
  * @param {import('../../format/schema.js').TransferPlaythrough} pt
  */
 function resolvePlaythroughTitle(pt) {
+  const fromPlatform = platformByIdOrName(pt.platform)?.name;
+  if (fromPlatform) return fromPlatform;
   const title = String(pt.title || '').trim();
-  if (!title || title === 'Log') return 'Log';
-  if (mapPlatformToBackloggd(title)) return 'Log';
-  return title;
+  if (title) return title;
+  return 'Log';
 }
 
 /**

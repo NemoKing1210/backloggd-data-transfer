@@ -8,6 +8,8 @@ import {
   HISTORY_KEY,
   SETTINGS_KEY,
 } from '../constants.js';
+import { clearCsvValueMapMemory } from '../format/csv/value-map-memory.js';
+import { clearHistory } from '../history/store.js';
 import { normalizeTitle } from '../utils/title.js';
 
 /**
@@ -237,6 +239,25 @@ export function clearGameCacheMisses() {
   }
   if (removed) persistGameCacheNow();
   return removed;
+}
+
+/**
+ * Clear game matches, transfer history, and CSV value maps.
+ * Leaves settings intact.
+ * @returns {{ games: number, history: number }}
+ */
+export function clearAllCachedStorage() {
+  const games = clearGameCache();
+  let history = 0;
+  try {
+    const raw = GM_getValue(HISTORY_KEY, []);
+    history = Array.isArray(raw) ? raw.length : 0;
+  } catch (_) {
+    history = 0;
+  }
+  clearHistory();
+  clearCsvValueMapMemory();
+  return { games, history };
 }
 
 /**

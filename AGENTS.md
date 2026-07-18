@@ -35,8 +35,8 @@ backloggd-data-transfer/
 │   ├── constants.js            # Keys, format id, defaults
 │   ├── state.js / settings.js / gm.js
 │   ├── format/                 # Unified schema, parse, serialize, status maps
-│   ├── destinations/backloggd/ # Search + create-log (import)
-│   ├── features/               # Panel UI, toast, SPA hosts, future export
+│   ├── destinations/backloggd/ # Search + create-log + multi-log scan
+│   ├── features/               # Panel UI, cleanup, toast, SPA hosts, future export
 │   ├── i18n/                   # en + ru for now
 │   ├── utils/
 │   └── styles/
@@ -60,7 +60,8 @@ backloggd-data-transfer/
 1. Match **Backloggd** only at `document-idle`.
 2. Inject a navbar **Transfer** button (`#bdt-nav-transfer`, same slot as Log a Game / Plus) + `GM_registerMenuCommand` → transfer panel.
 3. **Import tab:** stepped wizard (file → read/match → import) with history + about tabs; live `POST` for selected matches when logged in.
-4. Prefix UI/storage with `bdt_` / `data-bdt-*` so it does not clash with Backloggd Plus (`blp_`).
+4. **Cleanup tab:** scan the library for games with 2+ logs and deep-link to each log page for manual tidy-up.
+5. Prefix UI/storage with `bdt_` / `data-bdt-*` so it does not clash with Backloggd Plus (`blp_`).
 
 Keep `@connect` / `@grant` minimal. Userscript metadata lives in `vite.config.js`.
 

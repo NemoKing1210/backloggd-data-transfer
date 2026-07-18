@@ -1,4 +1,5 @@
 import {
+  clearAllCachedStorage,
   clearGameCache,
   clearGameCacheMisses,
   formatCacheBytes,
@@ -10,6 +11,7 @@ import { backloggdUrl } from '../destinations/backloggd/site.js';
 import { fmt } from '../i18n/index.js';
 import { t } from '../state.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
+import { syncHistoryTabBadge } from './history-ui.js';
 import { showToast } from './toast.js';
 
 /**
@@ -44,7 +46,10 @@ export function renderCachePanel(root) {
           <button type="button" class="bdt-btn bdt-btn--ghost bdt-btn--sm" data-bdt-cache-clear-misses>
             ${escapeHtml(t.cacheClearMisses)}
           </button>
-          <button type="button" class="bdt-btn bdt-btn--danger bdt-btn--sm" data-bdt-cache-clear>
+          <button type="button" class="bdt-btn bdt-btn--ghost bdt-btn--sm" data-bdt-cache-clear>
+            ${escapeHtml(t.cacheClearGames)}
+          </button>
+          <button type="button" class="bdt-btn bdt-btn--danger bdt-btn--sm" data-bdt-cache-clear-all>
             ${escapeHtml(t.cacheClearAll)}
           </button>
         </div>
@@ -147,12 +152,29 @@ export function renderCachePanel(root) {
   `;
 
   panel.querySelector('[data-bdt-cache-clear]')?.addEventListener('click', () => {
-    if (!window.confirm(t.cacheClearConfirm)) return;
+    if (!window.confirm(t.cacheClearGamesConfirm)) return;
     const removed = clearGameCache();
     showToast(fmt(t.cacheCleared, { count: removed }), {
       type: 'success',
-      title: t.cacheClearAll,
+      title: t.cacheClearGames,
     });
+    renderCachePanel(root);
+  });
+
+  panel.querySelector('[data-bdt-cache-clear-all]')?.addEventListener('click', () => {
+    if (!window.confirm(t.cacheClearAllConfirm)) return;
+    const result = clearAllCachedStorage();
+    showToast(
+      fmt(t.cacheAllCleared, {
+        games: result.games,
+        history: result.history,
+      }),
+      {
+        type: 'success',
+        title: t.cacheClearAll,
+      },
+    );
+    syncHistoryTabBadge(root);
     renderCachePanel(root);
   });
 

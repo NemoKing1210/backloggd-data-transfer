@@ -38,6 +38,7 @@ import { clearReadErrors, clearImportErrors, collectImportIssues, collectReadIss
 import { clearCsvMapping, readCsvMapping, readCsvValueMaps, renderCsvMapping } from './csv-map-ui.js';
 import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
 import { renderCachePanel, syncCacheTabBadge } from './cache-ui.js';
+import { renderCleanupPanel, syncCleanupTabBadge } from './cleanup-ui.js';
 import { showToast } from './toast.js';
 import {
   findBackloggdUserId,
@@ -1156,6 +1157,10 @@ export function openPanel(tab = 'import') {
           ${escapeHtml(t.tabExport)}
           <span class="bdt-tab__badge bdt-tab__badge--soon">${escapeHtml(t.exportLockedBadge)}</span>
         </button>
+        <button type="button" class="bdt-tab" data-bdt-tab="cleanup" role="tab">
+          ${escapeHtml(t.tabCleanup)}
+          <span class="bdt-tab__badge" data-bdt-cleanup-badge hidden>0</span>
+        </button>
         <button type="button" class="bdt-tab" data-bdt-tab="history" role="tab">
           ${escapeHtml(t.tabHistory)}
           <span class="bdt-tab__badge" data-bdt-history-badge hidden>0</span>
@@ -1320,6 +1325,7 @@ export function openPanel(tab = 'import') {
             <span class="bdt-export-locked__badge">${escapeHtml(t.exportLockedBadge)}</span>
           </div>
         </section>
+        <section class="bdt-tab-panel" data-bdt-panel="cleanup" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="history" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="cache" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="about" hidden>
@@ -1377,6 +1383,7 @@ export function openPanel(tab = 'import') {
   lockPageScroll();
   syncHistoryTabBadge(backdrop);
   syncCacheTabBadge(backdrop);
+  syncCleanupTabBadge(backdrop);
 
   const close = () => closePanel();
   backdrop.addEventListener('click', (e) => {
@@ -1697,6 +1704,9 @@ function selectTab(backdrop, tab) {
   backdrop.querySelectorAll('[data-bdt-panel]').forEach((panel) => {
     panel.hidden = panel.getAttribute('data-bdt-panel') !== tab;
   });
+  if (tab === 'cleanup') {
+    renderCleanupPanel(backdrop);
+  }
   if (tab === 'history') {
     renderHistoryPanel(backdrop);
   }

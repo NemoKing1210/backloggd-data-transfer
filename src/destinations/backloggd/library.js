@@ -23,11 +23,20 @@ const LIBRARY_LISTS = Object.freeze([
 const MAX_PAGES_PER_SHELF = 200;
 
 /**
+ * @typedef {object} LibraryGame
+ * @property {number | null} gameId
+ * @property {string} slug
+ * @property {string} title
+ * @property {string | null} coverUrl
+ */
+
+/**
  * @typedef {object} UserLibraryIndex
  * @property {string} username
  * @property {Set<number>} gameIds
  * @property {Set<string>} slugs
  * @property {number} pageCount
+ * @property {LibraryGame[]} games
  */
 
 /**
@@ -49,6 +58,8 @@ export async function loadCurrentUserLibrary(options = {}) {
   const gameIds = new Set();
   /** @type {Set<string>} */
   const slugs = new Set();
+  /** @type {Map<string, LibraryGame>} */
+  const gamesByKey = new Map();
   let pageCount = 0;
   let loadedAnyPage = false;
   /** @type {string | null} */
@@ -94,6 +105,9 @@ export async function loadCurrentUserLibrary(options = {}) {
 
       for (const id of parsed.gameIds) gameIds.add(id);
       for (const slug of parsed.slugs) slugs.add(slug);
+      for (const game of parsed.games) {
+        mergeLibraryGame(gamesByKey, game);
+      }
 
       if (!parsed.hasNext) break;
 
@@ -121,7 +135,15 @@ export async function loadCurrentUserLibrary(options = {}) {
     throw new Error(lastError);
   }
 
-  return { username, gameIds, slugs, pageCount };
+  return {
+    username,
+    gameIds,
+    slugs,
+    pageCount,
+    games: [...gamesByKey.values()].sort((a, b) =>
+      a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
+    ),
+  };
 }
 
 /**
@@ -181,14 +203,9 @@ export async function probeUserHasLog(input) {
   // 1) Per-game user log page — strongest signal when slug is known.
   if (username && slug) {
     try {
-      const res = await fetchHtmlResponse(
-        backloggdUrl(
-          `/u/${encodeURIComponent(username)}/logs/${encodeURIComponent(slug)}/`,
-        ),
-      );
-      if (res.ok && !isSoftNotFoundPage(res.html)) {
-        const fromLogs = parseExistingLogFromUserLogsPage(res.html, gameId);
-        return { exists: true, logId: fromLogs.logId ?? null };
+      const detail = await probeUserLogDetails({ gameId, slug, username });
+      if (detail.exists) {
+        return { exists: true, logId: detail.logId ?? null };
       }
     } catch (_) {
       /* try game page */
@@ -212,52 +229,281 @@ export async function probeUserHasLog(input) {
 }
 
 /**
- * @param {string} html
- * @param {number} [gameId]
+ * Count the user's logs (playthroughs) for one game via `/u/{user}/logs/{slug}/`.
+ * On modern Backloggd each playthrough is its own log.
+ *
+ * @param {{
+ *   gameId?: number | null,
+ *   slug: string,
+ *   username?: string,
+ * }} input
+ * @returns {Promise<{
+ *   exists: boolean,
+ *   logId: number | null,
+ *   logCount: number,
+ *   logs: { id: number | null, title: string }[],
+ *   logUrl: string | null,
+ * }>}
  */
-function parseExistingLogFromUserLogsPage(html, gameId) {
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+export async function probeUserLogDetails(input) {
+  const slug = String(input.slug || '')
+    .trim()
+    .toLowerCase();
+  const username = String(input.username || getCurrentUsername() || '').trim();
+  const gameIdRaw = Number(input.gameId);
+  const gameId =
+    Number.isFinite(gameIdRaw) && gameIdRaw > 0 ? gameIdRaw : null;
 
+  if (!username || !slug) {
+    return { exists: false, logId: null, logCount: 0, logs: [], logUrl: null };
+  }
+
+  const logUrl = backloggdUrl(
+    `/u/${encodeURIComponent(username)}/logs/${encodeURIComponent(slug)}/`,
+  );
+
+  const res = await fetchHtmlResponse(logUrl);
+  if (!res.ok || isSoftNotFoundPage(res.html)) {
+    return { exists: false, logId: null, logCount: 0, logs: [], logUrl };
+  }
+
+  const parsed = parseUserLogsDetail(res.html, gameId);
+  return {
+    exists: parsed.exists,
+    logId: parsed.logId,
+    logCount: parsed.logCount,
+    logs: parsed.logs,
+    logUrl,
+  };
+}
+
+/**
+ * @param {string} html
+ * @param {number | null} [gameId]
+ * @returns {{
+ *   exists: boolean,
+ *   logId: number | null,
+ *   logCount: number,
+ *   logs: { id: number | null, title: string }[],
+ * }}
+ */
+function parseUserLogsDetail(html, gameId = null) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  /** @type {{ id: number | null, title: string }[]} */
+  const logs = [];
+  /** @type {Set<string>} */
+  const seenKeys = new Set();
+
+  const pushLog = (id, title) => {
+    const cleanTitle = String(title || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const idNum =
+      id != null && Number.isFinite(Number(id)) && Number(id) > 0
+        ? Number(id)
+        : null;
+    const key = idNum != null ? `id:${idNum}` : `t:${cleanTitle.toLowerCase()}`;
+    if (seenKeys.has(key)) return;
+    if (!cleanTitle && idNum == null) return;
+    seenKeys.add(key);
+    logs.push({
+      id: idNum,
+      title: cleanTitle || (idNum != null ? `Log #${idNum}` : 'Log'),
+    });
+  };
+
+  // Switcher / editor list (legacy class names still used after the logs rename).
+  doc
+    .querySelectorAll(
+      '.playthrough-option, .log-option, [data-playthrough-id], [data-log-id]',
+    )
+    .forEach((el) => {
+      const id =
+        el.getAttribute('data-playthrough-id') ||
+        el.getAttribute('data-log-id') ||
+        el.getAttribute('data-id') ||
+        el.getAttribute('playthrough_id') ||
+        el.getAttribute('log_id');
+      const titleEl =
+        el.querySelector(
+          '.playthrough-option-title, .log-option-title, .title, .name',
+        ) || el;
+      pushLog(id, titleEl.textContent);
+    });
+
+  doc.querySelectorAll('.playthrough-option-title, .log-option-title').forEach((el) => {
+    const parent = el.closest(
+      '.playthrough-option, .log-option, [data-playthrough-id], [data-log-id], li, button, a',
+    );
+    const id =
+      parent?.getAttribute?.('data-playthrough-id') ||
+      parent?.getAttribute?.('data-log-id') ||
+      parent?.getAttribute?.('data-id') ||
+      null;
+    pushLog(id, el.textContent);
+  });
+
+  // Form fields: playthroughs[n][id] / playthroughs[n][title]
+  /** @type {Map<string, { id: number | null, title: string }>} */
+  const fromForm = new Map();
+  doc.querySelectorAll('input[name^="playthroughs["]').forEach((input) => {
+    const name = input.getAttribute('name') || '';
+    const match = name.match(/^playthroughs\[(\d+|-\d+)\]\[(id|title)\]$/i);
+    if (!match) return;
+    const idx = match[1];
+    const field = match[2].toLowerCase();
+    const row = fromForm.get(idx) || { id: null, title: '' };
+    const value = String(
+      input.getAttribute('value') ?? /** @type {HTMLInputElement} */ (input).value ?? '',
+    ).trim();
+    if (field === 'id') {
+      const n = Number(value);
+      row.id = Number.isFinite(n) && n > 0 ? n : null;
+    } else {
+      row.title = value;
+    }
+    fromForm.set(idx, row);
+  });
+  for (const row of fromForm.values()) {
+    if (row.id != null || row.title) pushLog(row.id, row.title || 'Log');
+  }
+
+  // Public multi-log profile page: titled sections under the game header.
+  if (logs.length <= 1) {
+    const mainTitle = String(
+      doc.querySelector('h1, .game-name, #game-title, .game-title')?.textContent ||
+        '',
+    )
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+    /** @type {string[]} */
+    const sectionTitles = [];
+    const candidates = [
+      ...doc.querySelectorAll(
+        '#logs-container h3, #user-logs h3, .user-logs h3, .log-section h3, .playthrough-section h3, .journal-section > h3',
+      ),
+    ];
+    // Broader fallback only when a dedicated logs container is absent.
+    if (!candidates.length) {
+      candidates.push(
+        ...doc.querySelectorAll('.col-md-8 h3, main .row h3'),
+      );
+    }
+    for (const el of candidates) {
+      const text = String(el.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!text || text.length > 80) continue;
+      if (mainTitle && text.toLowerCase() === mainTitle) continue;
+      if (
+        /^(log status|rating|days in journal|last played|first played|platforms?|display|journal|game status|reviews?|comments?)$/i.test(
+          text,
+        )
+      ) {
+        continue;
+      }
+      sectionTitles.push(text);
+    }
+    if (sectionTitles.length >= 2) {
+      for (const title of sectionTitles) pushLog(null, title);
+    }
+  }
+
+  let logId = null;
   const logIdInput =
     doc.querySelector('input[name="log[id]"]') ||
     doc.querySelector('#log_id') ||
     doc.querySelector('[name="log[id]"]');
   const logIdRaw = logIdInput?.getAttribute?.('value') ?? logIdInput?.value;
   if (logIdRaw != null && String(logIdRaw).trim() !== '') {
-    const logId = Number(logIdRaw);
-    if (Number.isFinite(logId) && logId > 0) {
-      return { exists: true, logId };
-    }
+    const n = Number(logIdRaw);
+    if (Number.isFinite(n) && n > 0) logId = n;
   }
 
-  if (
+  const hasEditor = Boolean(
     doc.querySelector(
-      '#log-editor-full, #playthrough-container, .playthrough-option-title, .journal_entry',
-    )
-  ) {
-    return { exists: true, logId: null };
-  }
+      '#log-editor-full, #playthrough-container, .playthrough-option-title, .journal_entry, .log-option-title',
+    ),
+  );
 
-  if (gameId != null) {
+  let exists = logs.length > 0 || logId != null || hasEditor;
+  if (!exists && gameId != null) {
     const cover = doc.querySelector(
       `.game-cover[game_id="${gameId}"], [game_id="${gameId}"]`,
     );
-    if (cover) return { exists: true, logId: null };
+    if (cover) exists = true;
   }
 
-  return { exists: false };
+  const logCount = Math.max(logs.length, exists ? 1 : 0);
+  if (exists && logs.length === 0) {
+    logs.push({ id: logId, title: 'Log' });
+  }
+
+  return {
+    exists,
+    logId,
+    logCount,
+    logs,
+  };
 }
 
 /**
- * @param {string} html
+ * @param {Map<string, LibraryGame>} map
+ * @param {LibraryGame} game
  */
-function isSoftNotFoundPage(html) {
-  const text = String(html || '').toLowerCase();
-  return (
-    /page not found|couldn't find|could not find|404|doesn’t exist|doesn't exist|no logs yet/i.test(
-      text,
-    ) && !/playthrough|log-editor|journal_entry|game-cover/i.test(text)
-  );
+function mergeLibraryGame(map, game) {
+  const slug = String(game.slug || '')
+    .trim()
+    .toLowerCase();
+  const gameId =
+    game.gameId != null && Number.isFinite(Number(game.gameId))
+      ? Number(game.gameId)
+      : null;
+  if (!slug && gameId == null) return;
+
+  /** @type {string | null} */
+  let existingKey = null;
+  /** @type {LibraryGame | undefined} */
+  let prev;
+
+  if (slug && map.has(`s:${slug}`)) {
+    existingKey = `s:${slug}`;
+    prev = map.get(existingKey);
+  } else if (gameId != null) {
+    for (const [key, value] of map) {
+      if (value.gameId === gameId) {
+        existingKey = key;
+        prev = value;
+        break;
+      }
+    }
+  }
+
+  if (!prev || !existingKey) {
+    const key = slug ? `s:${slug}` : `i:${gameId}`;
+    map.set(key, {
+      gameId,
+      slug,
+      title: game.title || slug || (gameId != null ? `Game #${gameId}` : ''),
+      coverUrl: game.coverUrl || null,
+    });
+    return;
+  }
+
+  // Prefer slug-keyed entries when we learn the slug later.
+  if (slug && existingKey !== `s:${slug}`) {
+    map.delete(existingKey);
+    existingKey = `s:${slug}`;
+    map.set(existingKey, prev);
+  }
+
+  if (gameId != null && prev.gameId == null) prev.gameId = gameId;
+  if (slug && !prev.slug) prev.slug = slug;
+  if (game.title && (!prev.title || prev.title === prev.slug)) {
+    prev.title = game.title;
+  }
+  if (game.coverUrl && !prev.coverUrl) prev.coverUrl = game.coverUrl;
 }
 
 /**
@@ -390,8 +636,25 @@ async function fetchHtmlResponse(url) {
 
 /**
  * @param {string} html
+ */
+function isSoftNotFoundPage(html) {
+  const text = String(html || '').toLowerCase();
+  return (
+    /page not found|couldn't find|could not find|404|doesn’t exist|doesn't exist|no logs yet/i.test(
+      text,
+    ) && !/playthrough|log-editor|journal_entry|game-cover|log-option/i.test(text)
+  );
+}
+
+/**
+ * @param {string} html
  * @param {number} [currentPage]
- * @returns {{ gameIds: number[], slugs: string[], hasNext: boolean }}
+ * @returns {{
+ *   gameIds: number[],
+ *   slugs: string[],
+ *   games: LibraryGame[],
+ *   hasNext: boolean,
+ * }}
  */
 function parseLibraryPage(html, currentPage = 1) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -399,27 +662,87 @@ function parseLibraryPage(html, currentPage = 1) {
   const gameIds = [];
   /** @type {string[]} */
   const slugs = [];
+  /** @type {LibraryGame[]} */
+  const games = [];
   const seenIds = new Set();
   const seenSlugs = new Set();
+  /** @type {Set<string>} */
+  const seenGameKeys = new Set();
+
+  /**
+   * @param {Element} cover
+   */
+  const ingestCover = (cover) => {
+    const idRaw = Number(cover.getAttribute('game_id'));
+    const gameId =
+      Number.isFinite(idRaw) && idRaw > 0 ? idRaw : null;
+
+    let anchor =
+      cover.closest('a[href*="/games/"]') ||
+      cover.querySelector('a[href*="/games/"]');
+    if (!anchor) {
+      const wrap = cover.closest(
+        '.rating-hover, .game-cover-link, .cover-link, li, .col, .col-auto, article',
+      );
+      anchor = wrap?.querySelector('a[href*="/games/"]') || null;
+    }
+
+    const href = anchor?.getAttribute?.('href') || '';
+    const slugMatch = href.match(/\/games\/([^/?#]+)/i);
+    const slug = slugMatch?.[1]
+      ? decodeURIComponent(slugMatch[1]).toLowerCase()
+      : '';
+
+    if (gameId != null && !seenIds.has(gameId)) {
+      seenIds.add(gameId);
+      gameIds.push(gameId);
+    }
+    if (slug && slug !== 'lib' && slug !== 'added' && !seenSlugs.has(slug)) {
+      seenSlugs.add(slug);
+      slugs.push(slug);
+    }
+
+    const key = slug ? `s:${slug}` : gameId != null ? `i:${gameId}` : '';
+    if (!key || seenGameKeys.has(key)) return;
+    seenGameKeys.add(key);
+
+    const img =
+      cover.querySelector('img') ||
+      anchor?.querySelector?.('img') ||
+      null;
+    const title = String(
+      cover.getAttribute('aria-label') ||
+        cover.getAttribute('title') ||
+        img?.getAttribute('alt') ||
+        anchor?.getAttribute('title') ||
+        anchor?.getAttribute('aria-label') ||
+        (slug ? slug.replace(/-/g, ' ') : '') ||
+        (gameId != null ? `Game #${gameId}` : ''),
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    const coverUrl =
+      img?.getAttribute('src') ||
+      img?.getAttribute('data-src') ||
+      img?.getAttribute('data-lazy-src') ||
+      null;
+
+    games.push({
+      gameId,
+      slug,
+      title,
+      coverUrl: coverUrl ? String(coverUrl) : null,
+    });
+  };
 
   doc
     .querySelectorAll(
       '.game-cover[game_id], [game_id].game-cover, .rating-hover .game-cover',
     )
-    .forEach((el) => {
-      const id = Number(el.getAttribute('game_id'));
-      if (!Number.isFinite(id) || id <= 0 || seenIds.has(id)) return;
-      seenIds.add(id);
-      gameIds.push(id);
-    });
+    .forEach((el) => ingestCover(el));
 
   if (!gameIds.length) {
-    doc.querySelectorAll('[game_id]').forEach((el) => {
-      const id = Number(el.getAttribute('game_id'));
-      if (!Number.isFinite(id) || id <= 0 || seenIds.has(id)) return;
-      seenIds.add(id);
-      gameIds.push(id);
-    });
+    doc.querySelectorAll('[game_id]').forEach((el) => ingestCover(el));
   }
 
   doc.querySelectorAll('a[href*="/games/"]').forEach((el) => {
@@ -427,17 +750,39 @@ function parseLibraryPage(html, currentPage = 1) {
     const match = href.match(/\/games\/([^/?#]+)/i);
     if (!match?.[1]) return;
     const slug = decodeURIComponent(match[1]).toLowerCase();
-    // Skip library / filter paths.
     if (!slug || slug === 'lib' || slug === 'added' || seenSlugs.has(slug)) {
       return;
     }
     seenSlugs.add(slug);
     slugs.push(slug);
+
+    const key = `s:${slug}`;
+    if (seenGameKeys.has(key)) return;
+    seenGameKeys.add(key);
+
+    const img = el.querySelector('img');
+    const title = String(
+      el.getAttribute('title') ||
+        el.getAttribute('aria-label') ||
+        img?.getAttribute('alt') ||
+        slug.replace(/-/g, ' '),
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+    games.push({
+      gameId: null,
+      slug,
+      title,
+      coverUrl:
+        img?.getAttribute('src') ||
+        img?.getAttribute('data-src') ||
+        null,
+    });
   });
 
   const hasNext = detectHasNextPage(doc, currentPage);
 
-  return { gameIds, slugs, hasNext };
+  return { gameIds, slugs, games, hasNext };
 }
 
 /**

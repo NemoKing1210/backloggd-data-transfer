@@ -82,6 +82,13 @@ export function forgetCsvValueMapKeys(kind, rawKeys) {
 }
 
 /**
+ * Wipe all remembered CSV status/rating/platform overrides.
+ */
+export function clearCsvValueMapMemory() {
+  persistMemory(emptyMemory());
+}
+
+/**
  * Whether a source label has a saved manual override.
  * @param {Record<string, string>} remembered lowercased keys
  * @param {string} raw

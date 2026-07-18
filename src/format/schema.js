@@ -102,6 +102,15 @@ export function normalizeDate(raw) {
     const mm = dmy[2].padStart(2, '0');
     return `${dmy[3]}-${mm}-${dd}`;
   }
+  // "June 27, 2024" / "Jan 1 2024"
+  const parsed = Date.parse(s);
+  if (!Number.isNaN(parsed)) {
+    const d = new Date(parsed);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    if (yyyy >= 1970 && yyyy <= 2100) return `${yyyy}-${mm}-${dd}`;
+  }
   return '';
 }
 

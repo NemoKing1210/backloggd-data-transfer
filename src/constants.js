@@ -74,6 +74,10 @@ export const ALT_STATUS_TO_CANONICAL = Object.freeze({
   done: 'completed',
   played: 'completed',
   completed: 'completed',
+  session: 'playing',
+  infinity: 'playing',
+  infinite: 'playing',
+  endless: 'playing',
 });
 
 export const DEFAULT_SETTINGS = {

@@ -18,6 +18,7 @@ import {
   setMatchProgress,
 } from './match-ui.js';
 import { clearReadErrors, clearImportErrors, collectImportIssues, collectReadIssues, renderImportErrors, renderReadErrors } from './errors-ui.js';
+import { clearCsvMapping, readCsvMapping, renderCsvMapping } from './csv-map-ui.js';
 import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
 import { showToast } from './toast.js';
 import {
@@ -27,6 +28,8 @@ import {
   setBackloggdUserId,
 } from '../destinations/backloggd/auth.js';
 import { recordImportHistory } from '../history/store.js';
+import { parseCsv } from '../format/csv/parse.js';
+import { buildTransferFromCsv, suggestCsvMapping } from '../format/csv/map.js';
 
 const PANEL_ID = 'bdt-panel-backdrop';
 export const NAV_BTN_ID = 'bdt-nav-transfer';
@@ -35,6 +38,10 @@ export const NAV_BTN_ID = 'bdt-nav-transfer';
 let loadedDoc = null;
 /** @type {File | null} */
 let pendingFile = null;
+/** @type {{ headers: string[], rows: Record<string, string>[], rowCount: number } | null} */
+let csvData = null;
+/** @type {Record<string, string>} */
+let csvMapping = {};
 /** @type {'json' | 'csv'} */
 let importFormat = 'json';
 /** @type {string | null} */
@@ -43,10 +50,11 @@ let prevHtmlOverflow = null;
 let matchRunId = 0;
 /**
  * Import wizard step.
- * @type {'file' | 'reading' | 'review' | 'importing' | 'done'}
+ * @type {'file' | 'mapping' | 'reading' | 'review' | 'importing' | 'done'}
  */
 let importStep = 'file';
 /** Highest step the user may jump to via the stepper. */
+let mappingReady = false;
 let reviewReady = false;
 let importReady = false;
 
@@ -110,9 +118,11 @@ export function ensureNavButton() {
 
 function resetAnalysisUi(root) {
   loadedDoc = null;
+  mappingReady = false;
   reviewReady = false;
   importReady = false;
   matchRunId += 1;
+  clearCsvMapping(root);
   const summary = root.querySelector('[data-bdt-summary]');
   if (summary) {
     summary.hidden = true;
@@ -139,7 +149,7 @@ function resetAnalysisUi(root) {
 
 /**
  * @param {HTMLElement} root
- * @param {'file' | 'reading' | 'review' | 'importing' | 'done'} step
+ * @param {'file' | 'mapping' | 'reading' | 'review' | 'importing' | 'done'} step
  */
 function setImportStep(root, step) {
   importStep = step;
@@ -157,7 +167,6 @@ function setImportStep(root, step) {
     el.classList.toggle('is-active', active);
     if (active) {
       el.classList.remove('is-enter');
-      // Restart enter animation
       void el.offsetWidth;
       el.classList.add('is-enter');
     }
@@ -165,44 +174,91 @@ function setImportStep(root, step) {
 
   const map = {
     file: 'file',
+    mapping: 'mapping',
     reading: 'review',
     review: 'review',
     importing: 'import',
     done: 'import',
   };
   const activeNav = map[step];
+  const showMapStep = importFormat === 'csv';
 
   root.querySelectorAll('[data-bdt-step]').forEach((btn) => {
     const id = btn.getAttribute('data-bdt-step');
+    if (id === 'mapping') {
+      btn.closest('.bdt-steps__item')?.toggleAttribute('hidden', !showMapStep);
+    }
+
     const done =
       (id === 'file' && step !== 'file') ||
+      (id === 'mapping' &&
+        (step === 'reading' ||
+          step === 'review' ||
+          step === 'importing' ||
+          step === 'done')) ||
       (id === 'review' && (step === 'importing' || step === 'done')) ||
       (id === 'import' && step === 'done');
     const current = id === activeNav;
     btn.classList.toggle('is-current', current);
     btn.classList.toggle('is-done', done && !current);
-    btn.classList.toggle('is-busy', step === 'reading' && id === 'review');
+    btn.classList.toggle(
+      'is-busy',
+      (step === 'reading' && id === 'review') || (step === 'mapping' && id === 'mapping'),
+    );
 
     let enabled = id === 'file';
-    if (id === 'review') enabled = reviewReady || step === 'reading' || step === 'review';
+    if (id === 'mapping') enabled = showMapStep && (mappingReady || step === 'mapping');
+    if (id === 'review') {
+      enabled = reviewReady || step === 'reading' || step === 'review';
+    }
     if (id === 'import') enabled = importReady || step === 'importing' || step === 'done';
-    // Don't jump forward while reading/importing mid-flight via stepper
     if (step === 'reading' || step === 'importing') {
-      enabled = id === activeNav || id === 'file';
+      enabled = id === activeNav || id === 'file' || (id === 'mapping' && showMapStep);
       if (step === 'importing' && id === 'review') enabled = true;
+      if (step === 'importing' && id === 'mapping' && showMapStep) enabled = true;
     }
     btn.disabled = !enabled;
     btn.setAttribute('aria-current', current ? 'step' : 'false');
   });
+
+  root.querySelector('[data-bdt-steps]')?.classList.toggle('has-mapping', showMapStep);
+
+  const reviewIndex = root.querySelector('[data-bdt-step-index="review"]');
+  const importIndex = root.querySelector('[data-bdt-step-index="import"]');
+  if (reviewIndex) reviewIndex.textContent = showMapStep ? '3' : '2';
+  if (importIndex) importIndex.textContent = showMapStep ? '4' : '3';
 
   const body = root.querySelector('.bdt-panel__body');
   if (body) body.scrollTop = 0;
 }
 
 function goBackToFile(root) {
+  csvData = null;
+  csvMapping = {};
   resetAnalysisUi(root);
   setImportStep(root, 'file');
   syncActionButtons(root);
+}
+
+function goBackToMapping(root) {
+  if (importFormat !== 'csv' || !csvData) {
+    goBackToFile(root);
+    return;
+  }
+  loadedDoc = null;
+  reviewReady = false;
+  importReady = false;
+  mappingReady = true;
+  renderCsvMapping(root, {
+    headers: csvData.headers,
+    rows: csvData.rows,
+    mapping: csvMapping,
+    filename: pendingFile?.name,
+    onChange(next) {
+      csvMapping = next;
+    },
+  });
+  setImportStep(root, 'mapping');
 }
 
 function goBackToReview(root) {
@@ -494,12 +550,146 @@ async function runImport(root, importDoc) {
   }
 }
 
+/**
+ * Match games and open the review stage for a transfer document.
+ * @param {HTMLElement} root
+ * @param {import('../format/schema.js').TransferDocument} doc
+ */
+async function runMatchAndReview(root, doc) {
+  const runId = ++matchRunId;
+  loadedDoc = doc;
+  reviewReady = false;
+  importReady = false;
+  setImportStep(root, 'reading');
+
+  try {
+    const total = loadedDoc.entries.length;
+
+    setMatchProgress(root, {
+      visible: true,
+      current: 0,
+      total: 1,
+      label: t.importLibraryProgress,
+      reset: true,
+    });
+
+    let library = null;
+    /** @type {string | null} */
+    let libraryError = null;
+    try {
+      library = await loadCurrentUserLibrary({
+        shouldCancel: () => runId !== matchRunId,
+        onProgress({ listIndex, listTotal, page }) {
+          if (runId !== matchRunId) return;
+          setMatchProgress(root, {
+            visible: true,
+            current: listIndex + 1,
+            total: listTotal,
+            label: fmt(t.importLibraryProgressDetail, {
+              list: listIndex + 1,
+              total: listTotal,
+              page,
+            }),
+          });
+        },
+      });
+    } catch (err) {
+      if (runId !== matchRunId) return;
+      libraryError = err instanceof Error ? err.message : String(err);
+      showToast(fmt(t.importLibraryFailed, { error: libraryError }), {
+        type: 'warning',
+        title: t.importLibraryFailedTitle,
+      });
+    }
+
+    if (runId !== matchRunId) return;
+
+    setMatchProgress(root, {
+      visible: true,
+      current: 0,
+      total: Math.max(total, 1),
+      title: '',
+      reset: true,
+    });
+
+    const matchSummary = await matchTransferEntries(loadedDoc, {
+      delayMs: MATCH_DELAY_MS,
+      library,
+      shouldCancel: () => runId !== matchRunId,
+      onProgress({ index, total: tot, entry }) {
+        if (runId !== matchRunId) return;
+        setMatchProgress(root, {
+          visible: true,
+          current: index + 1,
+          total: tot,
+          title: entryDisplayTitle(entry),
+        });
+      },
+    });
+
+    if (runId !== matchRunId) return;
+
+    setMatchProgress(root, { visible: false });
+    const analysis = analyzeTransferDocument(loadedDoc, {
+      foundCount: matchSummary.foundCount,
+      notFoundCount: matchSummary.notFoundCount + matchSummary.errorCount,
+      existingCount: matchSummary.existingCount,
+    });
+    renderSummary(root, analysis);
+    renderReadErrors(root, collectReadIssues(matchSummary.results, libraryError));
+    reviewReady = true;
+    setImportStep(root, 'review');
+    renderMatchTable(root, matchSummary.results, {
+      importExisting: settings.importExisting === true,
+      onSelectionChange(selected) {
+        syncImportButton(root, selected);
+      },
+      onImportExistingChange(enabled) {
+        saveSettings({ ...settings, importExisting: enabled });
+        reloadRuntimeSettings();
+      },
+    });
+    syncImportButton(root);
+    showToast(
+      fmt(t.importAnalyzed, {
+        count: analysis.total,
+        found: analysis.foundCount,
+        missing: analysis.notFoundCount,
+      }),
+      {
+        type: analysis.notFoundCount ? 'warning' : 'success',
+        title: t.importAnalyzedTitle,
+      },
+    );
+  } catch (err) {
+    if (runId !== matchRunId) return;
+    resetAnalysisUi(root);
+    if (importFormat === 'csv' && csvData) {
+      mappingReady = true;
+      setImportStep(root, 'mapping');
+    } else {
+      setImportStep(root, 'file');
+    }
+    showToast(err instanceof Error ? err.message : String(err), {
+      type: 'error',
+      title: t.importReadFailedTitle,
+    });
+  } finally {
+    if (runId === matchRunId) {
+      setMatchProgress(root, { visible: false });
+      syncActionButtons(root);
+    }
+  }
+}
+
 function formatAccept(format) {
   return format === 'csv' ? '.csv,text/csv' : '.json,application/json';
 }
 
 function clearPendingFile(root) {
   pendingFile = null;
+  csvData = null;
+  csvMapping = {};
   const input = root.querySelector('[data-bdt-file]');
   if (input) input.value = '';
   updateDropzoneUi(root);
@@ -514,10 +704,11 @@ function syncActionButtons(root) {
   const csvStub = root.querySelector('[data-bdt-csv-stub]');
   const isCsv = importFormat === 'csv';
 
-  if (csvStub) csvStub.hidden = !isCsv;
+  if (csvStub) csvStub.hidden = true;
   if (exampleBtn) exampleBtn.hidden = isCsv;
   if (analyzeBtn) {
-    analyzeBtn.disabled = isCsv || !pendingFile;
+    analyzeBtn.disabled = !pendingFile;
+    analyzeBtn.textContent = isCsv ? t.importAnalyzeMap : t.importAnalyzeContinue;
   }
 }
 
@@ -552,7 +743,7 @@ function updateDropzoneUi(root) {
  * Formats currently available for import selection.
  * @type {ReadonlySet<string>}
  */
-const READY_IMPORT_FORMATS = new Set(['json']);
+const READY_IMPORT_FORMATS = new Set(['json', 'csv']);
 
 /**
  * @param {HTMLElement} root
@@ -727,7 +918,10 @@ export function openPanel(tab = 'import') {
   reloadRuntimeSettings();
   pendingFile = null;
   loadedDoc = null;
+  csvData = null;
+  csvMapping = {};
   importStep = 'file';
+  mappingReady = false;
   reviewReady = false;
   importReady = false;
   importFormat = READY_IMPORT_FORMATS.has(settings.importFormat)
@@ -775,15 +969,21 @@ export function openPanel(tab = 'import') {
                 <span class="bdt-steps__label">${escapeHtml(t.importStepFile)}</span>
               </button>
             </li>
+            <li class="bdt-steps__item" hidden>
+              <button type="button" class="bdt-steps__btn" data-bdt-step="mapping" disabled>
+                <span class="bdt-steps__index">2</span>
+                <span class="bdt-steps__label">${escapeHtml(t.importStepMap)}</span>
+              </button>
+            </li>
             <li class="bdt-steps__item">
               <button type="button" class="bdt-steps__btn" data-bdt-step="review" disabled>
-                <span class="bdt-steps__index">2</span>
+                <span class="bdt-steps__index" data-bdt-step-index="review">2</span>
                 <span class="bdt-steps__label">${escapeHtml(t.importStepReview)}</span>
               </button>
             </li>
             <li class="bdt-steps__item">
               <button type="button" class="bdt-steps__btn" data-bdt-step="import" disabled>
-                <span class="bdt-steps__index">3</span>
+                <span class="bdt-steps__index" data-bdt-step-index="import">3</span>
                 <span class="bdt-steps__label">${escapeHtml(t.importStepImport)}</span>
               </button>
             </li>
@@ -810,19 +1010,16 @@ export function openPanel(tab = 'import') {
                   </button>
                   <button
                     type="button"
-                    class="bdt-format-card is-disabled"
+                    class="bdt-format-card"
                     data-bdt-format="csv"
                     role="radio"
                     aria-checked="false"
-                    aria-disabled="true"
-                    disabled
-                    title="${escapeAttr(t.importCsvStub)}"
                   >
                     <span class="bdt-format-card__icon" aria-hidden="true"><i class="fa-solid fa-align-right"></i></span>
                     <span class="bdt-format-card__body">
                       <span class="bdt-format-card__top">
                         <span class="bdt-format-card__title">${escapeHtml(t.importFormatCsv)}</span>
-                        <span class="bdt-format-card__badge bdt-format-card__badge--soon">${escapeHtml(t.importFormatCsvBadge)}</span>
+                        <span class="bdt-format-card__badge bdt-format-card__badge--ready">${escapeHtml(t.importFormatCsvBadge)}</span>
                       </span>
                       <span class="bdt-format-card__hint">${escapeHtml(t.importFormatCsvHint)}</span>
                       <span class="bdt-format-card__ext">${escapeHtml(t.importFormatCsvExt)}</span>
@@ -856,6 +1053,15 @@ export function openPanel(tab = 'import') {
               <div class="bdt-stage__footer">
                 <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-example>${escapeHtml(t.importDownloadExample)}</button>
                 <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-analyze disabled>${escapeHtml(t.importAnalyzeContinue)}</button>
+              </div>
+            </div>
+
+            <div class="bdt-stage" data-bdt-stage="mapping" hidden>
+              <p class="bdt-stage__lead">${escapeHtml(t.importStepMapLead)}</p>
+              <div class="bdt-csv-map-host" data-bdt-csv-map hidden></div>
+              <div class="bdt-stage__footer bdt-stage__footer--sticky">
+                <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-back-file-map>${escapeHtml(t.importBack)}</button>
+                <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-csv-continue>${escapeHtml(t.csvMapContinue)}</button>
               </div>
             </div>
 
@@ -1032,6 +1238,10 @@ export function openPanel(tab = 'import') {
         }
         return;
       }
+      if (target === 'mapping' && mappingReady && importFormat === 'csv') {
+        goBackToMapping(backdrop);
+        return;
+      }
       if (target === 'review' && reviewReady) {
         goBackToReview(backdrop);
         return;
@@ -1043,6 +1253,13 @@ export function openPanel(tab = 'import') {
   });
 
   backdrop.querySelector('[data-bdt-back-file]')?.addEventListener('click', () => {
+    if (importFormat === 'csv' && csvData) {
+      goBackToMapping(backdrop);
+      return;
+    }
+    goBackToFile(backdrop);
+  });
+  backdrop.querySelector('[data-bdt-back-file-map]')?.addEventListener('click', () => {
     goBackToFile(backdrop);
   });
   backdrop.querySelector('[data-bdt-back-review]')?.addEventListener('click', () => {
@@ -1054,7 +1271,21 @@ export function openPanel(tab = 'import') {
   backdrop.querySelector('[data-bdt-cancel-read]')?.addEventListener('click', () => {
     matchRunId += 1;
     resetAnalysisUi(backdrop);
-    setImportStep(backdrop, 'file');
+    if (importFormat === 'csv' && csvData) {
+      mappingReady = true;
+      renderCsvMapping(backdrop, {
+        headers: csvData.headers,
+        rows: csvData.rows,
+        mapping: csvMapping,
+        filename: pendingFile?.name,
+        onChange(next) {
+          csvMapping = next;
+        },
+      });
+      setImportStep(backdrop, 'mapping');
+    } else {
+      setImportStep(backdrop, 'file');
+    }
     syncActionButtons(backdrop);
     showToast(t.importReadCancelled, {
       type: 'info',
@@ -1062,24 +1293,64 @@ export function openPanel(tab = 'import') {
     });
   });
 
-  const analyzeBtn = backdrop.querySelector('[data-bdt-analyze]');
-  analyzeBtn?.addEventListener('click', async () => {
-    if (importFormat === 'csv') {
-      showToast(t.importCsvStub, { type: 'warning', title: t.toastCsvSoonTitle });
+  backdrop.querySelector('[data-bdt-csv-continue]')?.addEventListener('click', async () => {
+    if (!csvData) {
+      showToast(t.importNeedFile, { type: 'warning', title: t.importNeedFileTitle });
       return;
     }
+    csvMapping = readCsvMapping(backdrop);
+    const built = buildTransferFromCsv({
+      rows: csvData.rows,
+      mapping: csvMapping,
+      filename: pendingFile?.name,
+    });
+    if (!built.ok) {
+      showToast(built.error, { type: 'warning', title: t.csvMapInvalidTitle });
+      return;
+    }
+    await runMatchAndReview(backdrop, built.value);
+  });
+
+  const analyzeBtn = backdrop.querySelector('[data-bdt-analyze]');
+  analyzeBtn?.addEventListener('click', async () => {
     if (!pendingFile) {
       showToast(t.importNeedFile, { type: 'warning', title: t.importNeedFileTitle });
       return;
     }
+
     analyzeBtn.disabled = true;
-    const runId = ++matchRunId;
     reviewReady = false;
     importReady = false;
-    setImportStep(backdrop, 'reading');
 
     try {
       const text = await readFileAsText(pendingFile);
+
+      if (importFormat === 'csv') {
+        const parsed = parseCsv(text);
+        if (!parsed.headers.length || !parsed.rowCount) {
+          showToast(t.csvEmptyError, { type: 'error', title: t.importInvalidTitle });
+          return;
+        }
+        csvData = parsed;
+        csvMapping = suggestCsvMapping(parsed.headers);
+        mappingReady = true;
+        renderCsvMapping(backdrop, {
+          headers: parsed.headers,
+          rows: parsed.rows,
+          mapping: csvMapping,
+          filename: pendingFile.name,
+          onChange(next) {
+            csvMapping = next;
+          },
+        });
+        setImportStep(backdrop, 'mapping');
+        showToast(
+          fmt(t.csvMapReady, { count: parsed.rowCount }),
+          { type: 'success', title: t.csvMapReadyTitle },
+        );
+        return;
+      }
+
       const parsed = parseTransferDocument(text);
       if (!parsed.ok) {
         resetAnalysisUi(backdrop);
@@ -1090,122 +1361,16 @@ export function openPanel(tab = 'import') {
         });
         return;
       }
-      loadedDoc = parsed.value;
-      const total = loadedDoc.entries.length;
-
-      setMatchProgress(backdrop, {
-        visible: true,
-        current: 0,
-        total: 1,
-        label: t.importLibraryProgress,
-        reset: true,
-      });
-
-      let library = null;
-      /** @type {string | null} */
-      let libraryError = null;
-      try {
-        library = await loadCurrentUserLibrary({
-          shouldCancel: () => runId !== matchRunId,
-          onProgress({ listIndex, listTotal, page }) {
-            if (runId !== matchRunId) return;
-            setMatchProgress(backdrop, {
-              visible: true,
-              current: listIndex + 1,
-              total: listTotal,
-              label: fmt(t.importLibraryProgressDetail, {
-                list: listIndex + 1,
-                total: listTotal,
-                page,
-              }),
-            });
-          },
-        });
-      } catch (err) {
-        if (runId !== matchRunId) return;
-        libraryError = err instanceof Error ? err.message : String(err);
-        showToast(fmt(t.importLibraryFailed, { error: libraryError }), {
-          type: 'warning',
-          title: t.importLibraryFailedTitle,
-        });
-      }
-
-      if (runId !== matchRunId) return;
-
-      setMatchProgress(backdrop, {
-        visible: true,
-        current: 0,
-        total: Math.max(total, 1),
-        title: '',
-        reset: true,
-      });
-
-      const matchSummary = await matchTransferEntries(loadedDoc, {
-        delayMs: MATCH_DELAY_MS,
-        library,
-        shouldCancel: () => runId !== matchRunId,
-        onProgress({ index, total: tot, entry }) {
-          if (runId !== matchRunId) return;
-          setMatchProgress(backdrop, {
-            visible: true,
-            current: index + 1,
-            total: tot,
-            title: entryDisplayTitle(entry),
-          });
-        },
-      });
-
-      if (runId !== matchRunId) return;
-
-      setMatchProgress(backdrop, { visible: false });
-      const analysis = analyzeTransferDocument(loadedDoc, {
-        foundCount: matchSummary.foundCount,
-        notFoundCount: matchSummary.notFoundCount + matchSummary.errorCount,
-        existingCount: matchSummary.existingCount,
-      });
-      renderSummary(backdrop, analysis);
-      renderReadErrors(
-        backdrop,
-        collectReadIssues(matchSummary.results, libraryError),
-      );
-      reviewReady = true;
-      setImportStep(backdrop, 'review');
-      renderMatchTable(backdrop, matchSummary.results, {
-        importExisting: settings.importExisting === true,
-        onSelectionChange(selected) {
-          syncImportButton(backdrop, selected);
-        },
-        onImportExistingChange(enabled) {
-          saveSettings({ ...settings, importExisting: enabled });
-          reloadRuntimeSettings();
-        },
-      });
-      syncImportButton(backdrop);
-      showToast(
-        fmt(t.importAnalyzed, {
-          count: analysis.total,
-          found: analysis.foundCount,
-          missing: analysis.notFoundCount,
-        }),
-        {
-          type: analysis.notFoundCount ? 'warning' : 'success',
-          title: t.importAnalyzedTitle,
-        },
-      );
+      await runMatchAndReview(backdrop, parsed.value);
     } catch (err) {
-      if (runId === matchRunId) {
-        resetAnalysisUi(backdrop);
-        setImportStep(backdrop, 'file');
-        showToast(err instanceof Error ? err.message : String(err), {
-          type: 'error',
-          title: t.importReadFailedTitle,
-        });
-      }
+      resetAnalysisUi(backdrop);
+      setImportStep(backdrop, 'file');
+      showToast(err instanceof Error ? err.message : String(err), {
+        type: 'error',
+        title: t.importReadFailedTitle,
+      });
     } finally {
-      if (runId === matchRunId) {
-        setMatchProgress(backdrop, { visible: false });
-        syncActionButtons(backdrop);
-      }
+      syncActionButtons(backdrop);
     }
   });
 
@@ -1313,7 +1478,10 @@ export function closePanel() {
   unlockPageScroll();
   pendingFile = null;
   loadedDoc = null;
+  csvData = null;
+  csvMapping = {};
   importStep = 'file';
+  mappingReady = false;
   reviewReady = false;
   importReady = false;
   matchRunId += 1;

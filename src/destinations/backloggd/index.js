@@ -1,3 +1,4 @@
+import { entryDisplayTitle } from '../../format/schema.js';
 import { sleep } from '../../utils/download.js';
 import { createBackloggdLog } from './create-log.js';
 import { searchBackloggdGame } from './search.js';
@@ -27,7 +28,16 @@ export async function importTransferToBackloggd(doc, options = {}) {
     const entry = entries[index];
     let resolved = null;
     try {
-      resolved = await searchBackloggdGame(entry.title);
+      if (entry.game_id != null) {
+        resolved = {
+          slug: entry.slug || '',
+          title: entryDisplayTitle(entry),
+          url: '',
+          game_id: entry.game_id,
+        };
+      } else {
+        resolved = await searchBackloggdGame(entryDisplayTitle(entry));
+      }
     } catch (err) {
       const result = {
         ok: false,

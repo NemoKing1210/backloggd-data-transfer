@@ -8,38 +8,43 @@ export const SCAN_DEBOUNCE_MS = 400;
 
 /** Canonical transfer file identity. */
 export const TRANSFER_FORMAT_ID = 'backloggd-transfer';
-export const TRANSFER_FORMAT_VERSION = 1;
+/** v2 aligns entry fields with Backloggd log POST (`log`, `playthroughs`, `dates`). */
+export const TRANSFER_FORMAT_VERSION = 2;
 
 /** Filename prefix for downloaded transfer JSON. */
 export const TRANSFER_FILENAME_PREFIX = 'backloggd-transfer';
 
 /**
- * Canonical play statuses (Backloggd keys).
- * Sources map their labels into these; the Backloggd importer maps them to site UI/API.
+ * Values for `log.status` on Backloggd (see log create/update POST).
+ * Legacy transfer v1 used `played` — normalize to `completed`.
  */
-export const STATUS_KEYS = Object.freeze([
+export const LOG_STATUS_KEYS = Object.freeze([
   'wishlist',
   'backlog',
   'playing',
-  'played',
+  'completed',
   'shelved',
   'abandoned',
   'retired',
 ]);
 
-export const STATUS_LABELS = Object.freeze({
+export const LOG_STATUS_LABELS = Object.freeze({
   wishlist: 'Wishlist',
   backlog: 'Backlog',
   playing: 'Playing',
-  played: 'Played',
+  completed: 'Completed',
   shelved: 'Shelved',
   abandoned: 'Abandoned',
   retired: 'Retired',
 });
 
+/** @deprecated use LOG_STATUS_KEYS */
+export const STATUS_KEYS = LOG_STATUS_KEYS;
+/** @deprecated use LOG_STATUS_LABELS */
+export const STATUS_LABELS = LOG_STATUS_LABELS;
+
 /**
- * Common alternate status labels (e.g. Notion DB options) → canonical.
- * Aligns with Backloggd Plus export mapping (STATUS_TO_NOTION, reversed).
+ * Common alternate labels → `log.status`.
  */
 export const ALT_STATUS_TO_CANONICAL = Object.freeze({
   'not started': null,
@@ -48,7 +53,9 @@ export const ALT_STATUS_TO_CANONICAL = Object.freeze({
   'in progress': 'playing',
   dropped: 'abandoned',
   tried: 'retired',
-  done: 'played',
+  done: 'completed',
+  played: 'completed',
+  completed: 'completed',
 });
 
 export const DEFAULT_SETTINGS = {

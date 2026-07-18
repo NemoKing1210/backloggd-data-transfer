@@ -1,7 +1,6 @@
-import { ALT_STATUS_TO_CANONICAL, STATUS_LABELS } from '../constants.js';
-import { normalizeRating, normalizeStatus } from './schema.js';
+import { ALT_STATUS_TO_CANONICAL, LOG_STATUS_LABELS } from '../constants.js';
+import { normalizeLogStatus, normalizeRating } from './schema.js';
 
-/** Text rating labels → Backloggd 1–10 (same ladder as Backloggd Plus). */
 const RATING_LABEL_TO_SCORE = Object.freeze({
   terrible: 1,
   bad: 2,
@@ -14,12 +13,12 @@ const RATING_LABEL_TO_SCORE = Object.freeze({
 });
 
 /**
- * Map a free-form status string (site label, alternate label, or key) to canonical key.
+ * Map a free-form status string to `log.status`.
  * @param {string} raw
  * @returns {string|null}
  */
 export function mapStatusToCanonical(raw) {
-  const direct = normalizeStatus(raw);
+  const direct = normalizeLogStatus(raw);
   if (direct) return direct;
 
   const v = String(raw || '')
@@ -32,17 +31,14 @@ export function mapStatusToCanonical(raw) {
     return ALT_STATUS_TO_CANONICAL[v];
   }
 
-  for (const [key, label] of Object.entries(STATUS_LABELS)) {
+  for (const [key, label] of Object.entries(LOG_STATUS_LABELS)) {
     if (label.toLowerCase() === v) return key;
   }
 
-  if (v === 'completed' || v === 'done') return 'played';
-  if (v === 'in progress') return 'playing';
   return null;
 }
 
 /**
- * Parse Notion-style rating (text label, numeric stars, or 1–10).
  * @param {unknown} raw
  * @returns {number|null}
  */
@@ -68,8 +64,4 @@ export function parseFavorite(raw) {
     .toLowerCase();
   if (!v) return false;
   return v === 'yes' || v === 'true' || v === '1' || v === '✓' || v === 'checked';
-}
-
-export function parseIsDlc(raw) {
-  return parseFavorite(raw);
 }

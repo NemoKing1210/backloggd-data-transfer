@@ -9,7 +9,8 @@ Userscript that **imports game logs into [Backloggd](https://www.backloggd.com)*
 
 Compatible with [Tampermonkey](https://www.tampermonkey.net/), [Violentmonkey](https://violentmonkey.github.io/), [Greasemonkey](https://www.greasespot.net/), [ScriptCat](https://scriptcat.org/), and similar managers.
 
-> **Status:** early (`0.1.3`). Runs on Backloggd only. Transfer JSON import UI + dry-run pipeline. Live writes and export from Backloggd are planned.
+> **Status:** early (`0.1.3`). Runs on Backloggd only. Transfer format **v2** mirrors the native log POST body. Live writes still TBD.
+
 
 Companion to [Backloggd Plus](https://github.com/NemoKing1210/backloggd-plus) (enrichment UI). Not affiliated with Backloggd.
 

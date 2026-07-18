@@ -20,9 +20,11 @@ Edit source under `src/`, then run `npm run build` to refresh the root install f
 
 ## Goals (priority order)
 
-1. **Transfer JSON → Backloggd** — on backloggd.com, read the file and create logs via the same requests the site uses (manual/scripted, sequential, rate-limited).
+1. **Transfer JSON → Backloggd** — on backloggd.com, read the file and `POST` logs using the same form fields as the native log editor (`log`, `playthroughs`, `dates`).
 2. **Other sources** — each platform (or offline tool) emits the same JSON; the Backloggd importer stays shared. Do **not** scrape/export from Notion — it already has native export.
 3. **Backloggd → transfer JSON** — export the user’s library (future).
+
+Transfer format **v2** field names match the site API; see `docs/transfer-format.md`.
 
 ## Repository layout
 

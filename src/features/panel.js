@@ -3,6 +3,7 @@ import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
 import { analyzeTransferDocument, statusDisplayLabel } from '../format/analyze.js';
 import { createExampleTransferDocument } from '../format/example.js';
 import { parseTransferDocument } from '../format/parse.js';
+import { entryDisplayTitle } from '../format/schema.js';
 import { serializeTransferDocument, transferFilename } from '../format/serialize.js';
 import { fmt } from '../i18n/index.js';
 import { saveSettings } from '../settings.js';
@@ -126,14 +127,9 @@ function updateDropzoneUi(root) {
   const filled = root.querySelector('[data-bdt-drop-filled]');
   const nameEl = root.querySelector('[data-bdt-file-name]');
   const metaEl = root.querySelector('[data-bdt-drop-meta]');
-  const hintEl = root.querySelector('[data-bdt-format-hint]');
 
   if (metaEl) {
     metaEl.textContent = importFormat === 'csv' ? t.importDropCsv : t.importDropJson;
-  }
-  if (hintEl) {
-    hintEl.textContent =
-      importFormat === 'csv' ? t.importFormatCsvHint : t.importFormatJsonHint;
   }
 
   if (!zone || !empty || !filled) return;
@@ -161,7 +157,9 @@ function setImportFormat(root, format) {
   reloadRuntimeSettings();
 
   root.querySelectorAll('[data-bdt-format]').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.getAttribute('data-bdt-format') === importFormat);
+    const active = btn.getAttribute('data-bdt-format') === importFormat;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
   });
 
   const input = root.querySelector('[data-bdt-file]');
@@ -234,6 +232,7 @@ function renderSummary(root, analysis) {
       <div><dt>${escapeHtml(t.importStatFavorites)}</dt><dd>${analysis.favorites}</dd></div>
       <div><dt>${escapeHtml(t.importStatDates)}</dt><dd>${analysis.withDates}</dd></div>
       <div><dt>${escapeHtml(t.importStatReviews)}</dt><dd>${analysis.withReview}</dd></div>
+      <div><dt>${escapeHtml(t.importStatGameId)}</dt><dd>${analysis.withGameId}</dd></div>
     </dl>
     <p class="bdt-summary__statuses-label">${escapeHtml(t.importStatByStatus)}</p>
     <ul class="bdt-summary__statuses">${statusLines || `<li><span>—</span><strong>0</strong></li>`}</ul>
@@ -274,11 +273,32 @@ export function openPanel(tab = 'import') {
 
           <div class="bdt-field">
             <p class="bdt-field__label">${escapeHtml(t.importFormatLabel)}</p>
-            <div class="bdt-segment" role="radiogroup" aria-label="${escapeAttr(t.importFormatLabel)}">
-              <button type="button" class="bdt-segment__btn" data-bdt-format="json" role="radio">${escapeHtml(t.importFormatJson)}</button>
-              <button type="button" class="bdt-segment__btn" data-bdt-format="csv" role="radio">${escapeHtml(t.importFormatCsv)}</button>
+            <div class="bdt-format-cards" role="radiogroup" aria-label="${escapeAttr(t.importFormatLabel)}">
+              <button type="button" class="bdt-format-card" data-bdt-format="json" role="radio" aria-checked="false">
+                <span class="bdt-format-card__icon" aria-hidden="true"><i class="fa-solid fa-layer-group"></i></span>
+                <span class="bdt-format-card__body">
+                  <span class="bdt-format-card__top">
+                    <span class="bdt-format-card__title">${escapeHtml(t.importFormatJson)}</span>
+                    <span class="bdt-format-card__badge bdt-format-card__badge--ready">${escapeHtml(t.importFormatJsonBadge)}</span>
+                  </span>
+                  <span class="bdt-format-card__hint">${escapeHtml(t.importFormatJsonHint)}</span>
+                  <span class="bdt-format-card__ext">${escapeHtml(t.importFormatJsonExt)}</span>
+                </span>
+                <span class="bdt-format-card__check" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="bdt-format-card" data-bdt-format="csv" role="radio" aria-checked="false">
+                <span class="bdt-format-card__icon" aria-hidden="true"><i class="fa-solid fa-align-right"></i></span>
+                <span class="bdt-format-card__body">
+                  <span class="bdt-format-card__top">
+                    <span class="bdt-format-card__title">${escapeHtml(t.importFormatCsv)}</span>
+                    <span class="bdt-format-card__badge bdt-format-card__badge--soon">${escapeHtml(t.importFormatCsvBadge)}</span>
+                  </span>
+                  <span class="bdt-format-card__hint">${escapeHtml(t.importFormatCsvHint)}</span>
+                  <span class="bdt-format-card__ext">${escapeHtml(t.importFormatCsvExt)}</span>
+                </span>
+                <span class="bdt-format-card__check" aria-hidden="true"></span>
+              </button>
             </div>
-            <p class="bdt-muted bdt-field__hint" data-bdt-format-hint></p>
           </div>
 
           <div class="bdt-dropzone" data-bdt-dropzone>
@@ -434,7 +454,7 @@ export function openPanel(tab = 'import') {
           const line = fmt(t.importProgress, {
             index: index + 1,
             total,
-            title: entry.title,
+            title: entryDisplayTitle(entry),
           });
           const status = result.ok ? 'ok' : result.error || 'fail';
           if (logEl) logEl.textContent += `${line} — ${status}\n`;
@@ -462,7 +482,9 @@ export function openPanel(tab = 'import') {
 
   // Apply initial format UI without clearing twice
   backdrop.querySelectorAll('[data-bdt-format]').forEach((btn) => {
-    btn.classList.toggle('is-active', btn.getAttribute('data-bdt-format') === importFormat);
+    const active = btn.getAttribute('data-bdt-format') === importFormat;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
   });
   updateDropzoneUi(backdrop);
   syncActionButtons(backdrop);

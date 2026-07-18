@@ -40,12 +40,14 @@ export function parseTransferDocument(raw) {
     return { ok: false, error: 'entries must be an array' };
   }
 
+  // createEntry migrates flat v1 rows into log / playthroughs / dates
   const doc = createDocument({
     source: data.source || { platform: 'custom' },
     entries: data.entries.map((e) => createEntry(e)),
     exportedAt: data.exportedAt || new Date().toISOString(),
   });
-  doc.version = version;
+  // Always emit current schema version after normalize/migrate
+  doc.version = TRANSFER_FORMAT_VERSION;
 
   return { ok: true, value: doc };
 }

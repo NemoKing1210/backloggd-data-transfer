@@ -1,4 +1,5 @@
-import { STATUS_LABELS } from '../constants.js';
+import { LOG_STATUS_LABELS } from '../constants.js';
+import { entryDisplayTitle, primaryPlaythrough } from './schema.js';
 
 /**
  * @typedef {object} TransferAnalysis
@@ -13,13 +14,13 @@ import { STATUS_LABELS } from '../constants.js';
  * @property {number} favorites
  * @property {number} withDates
  * @property {number} withReview
+ * @property {number} withGameId
  * @property {Record<string, number>} byStatus
- * @property {number|null} newCount  null until Backloggd diff is implemented
+ * @property {number|null} newCount
  * @property {number|null} existingCount
  */
 
 /**
- * Summarize a parsed transfer document (local stats only; site “new” check TBD).
  * @param {import('./schema.js').TransferDocument} doc
  * @returns {TransferAnalysis}
  */
@@ -30,21 +31,28 @@ export function analyzeTransferDocument(doc) {
   let favorites = 0;
   let withDates = 0;
   let withReview = 0;
+  let withGameId = 0;
   /** @type {Record<string, number>} */
   const byStatus = {};
 
   for (const entry of entries) {
-    const titleKey = String(entry.title || '')
-      .trim()
-      .toLowerCase();
+    const titleKey = entryDisplayTitle(entry).toLowerCase();
     if (titleKey) titles.add(titleKey);
 
-    if (entry.rating != null) withRating += 1;
-    if (entry.favorite) favorites += 1;
-    if (entry.dateStart || entry.dateEnd) withDates += 1;
-    if (entry.review) withReview += 1;
+    const pt = primaryPlaythrough(entry);
+    if (pt.rating != null) withRating += 1;
+    if (entry.log?.game_liked) favorites += 1;
+    if (
+      pt.start_date ||
+      pt.finish_date ||
+      (entry.dates || []).some((d) => d.range_start_date || d.range_end_date)
+    ) {
+      withDates += 1;
+    }
+    if (pt.review) withReview += 1;
+    if (entry.game_id != null) withGameId += 1;
 
-    const status = entry.status || 'none';
+    const status = entry.log?.status || 'none';
     byStatus[status] = (byStatus[status] || 0) + 1;
   }
 
@@ -63,14 +71,14 @@ export function analyzeTransferDocument(doc) {
     favorites,
     withDates,
     withReview,
+    withGameId,
     byStatus,
     newCount: null,
     existingCount: null,
   };
 }
 
-/** Human label for a status key in analysis UI. */
 export function statusDisplayLabel(key, fallbackNone = '—') {
   if (!key || key === 'none') return fallbackNone;
-  return STATUS_LABELS[key] || key;
+  return LOG_STATUS_LABELS[key] || key;
 }

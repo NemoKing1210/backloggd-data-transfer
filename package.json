@@ -1,6 +1,6 @@
 {
   "name": "backloggd-data-transfer",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "private": true,
   "type": "module",
   "description": "Userscript to import game logs into Backloggd from other platforms via a unified transfer format",

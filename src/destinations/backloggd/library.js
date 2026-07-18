@@ -477,27 +477,13 @@ function parseUserLogsDetail(html, gameId = null, options = {}) {
     });
   }
 
-  const hasLogsPage = Boolean(
-    doc.querySelector(
-      '.playthrough-view, .game-log-view, #logs-display-nav, button.log-editor-btn',
-    ),
-  );
-  const hasEditor = Boolean(
-    doc.querySelector(
-      '#log-editor-full, #playthrough-container, #journal-game-modal, #current_playthrough',
-    ),
-  );
+  // Only concrete playthrough / log ids count — empty editor chrome (and
+  // title-only placeholders without id) must not mean exists=true.
+  const logsWithId = logs.filter((l) => l.id != null);
+  const exists = logsWithId.length > 0 || logId != null;
 
-  let exists = logs.length > 0 || logId != null || hasEditor || hasLogsPage;
-  if (!exists && gameId != null) {
-    const cover = doc.querySelector(
-      `.game-cover[game_id="${gameId}"], [game_id="${gameId}"]`,
-    );
-    if (cover) exists = true;
-  }
-
-  const logCount = Math.max(logs.length, exists ? 1 : 0);
-  if (exists && logs.length === 0) {
+  const logCount = Math.max(logsWithId.length, exists ? 1 : 0);
+  if (exists && logsWithId.length === 0) {
     logs.push({
       id: logId,
       title: 'Log',
@@ -516,7 +502,7 @@ function parseUserLogsDetail(html, gameId = null, options = {}) {
     logId,
     logCount,
     gameStatus,
-    logs,
+    logs: exists ? (logsWithId.length ? logsWithId : logs) : logsWithId,
   };
 }
 
@@ -758,11 +744,21 @@ function parseExistingLogFromGamePage(html, gameId) {
     }
   }
 
-  // Sidebar play status buttons (Backloggd Plus uses the same markers).
+  // Sidebar: only *active* shelf / status buttons count (not every [play_type] control).
   const sidebar = doc.querySelector('#logging-sidebar-section');
   if (sidebar) {
     const activePlay = sidebar.querySelector(
-      '.played-btn-container.active, .playing-btn-container.active, .backlog-btn-container.active, .wishlist-btn-container.active, .btn-play.active, .btn-play.selected, [play_type]',
+      [
+        '.played-btn-container.active',
+        '.playing-btn-container.active',
+        '.backlog-btn-container.active',
+        '.wishlist-btn-container.active',
+        '.btn-play.active',
+        '.btn-play.selected',
+        '[play_type].active',
+        '[play_type].selected',
+        '[play_type].filled',
+      ].join(', '),
     );
     if (activePlay) return { exists: true, logId: null };
 
@@ -772,27 +768,34 @@ function parseExistingLogFromGamePage(html, gameId) {
     if (rated) return { exists: true, logId: null };
 
     const liked = sidebar.querySelector(
-      '.like-game-btn.active, .like-game-btn.liked, .fa-heart.fa-solid',
+      '.like-game-btn.active, .like-game-btn.liked',
     );
     if (liked) return { exists: true, logId: null };
   }
 
-  // Cover widget with the user’s rating for this game.
+  // Cover must show *user* rating, not community stars on the game page.
   if (gameId != null) {
     const cover = doc.querySelector(
       `.game-cover[game_id="${gameId}"], [game_id="${gameId}"].game-cover`,
     );
-    if (
-      cover &&
-      (cover.classList.contains('user-rating') ||
-        cover.getAttribute('data-rating') ||
-        cover.querySelector('.stars-top, .user-rating, .rating'))
-    ) {
-      return { exists: true, logId: null };
+    if (cover) {
+      const dataRating = Number(cover.getAttribute('data-rating'));
+      const stars = cover.querySelector('.user-rating .stars-top, .stars-top');
+      const style = stars?.getAttribute('style') || '';
+      const widthMatch = style.match(/width\s*:\s*([\d.]+)\s*%/i);
+      const width = widthMatch ? Number(widthMatch[1]) : 0;
+      const hasUserRatingClass = cover.classList.contains('user-rating');
+      const hasFilledStars =
+        hasUserRatingClass && Number.isFinite(width) && width > 0;
+      if (
+        (Number.isFinite(dataRating) && dataRating > 0) ||
+        hasFilledStars
+      ) {
+        return { exists: true, logId: null };
+      }
     }
   }
 
-  // Any checked star rating on the page for the current user.
   if (
     doc.querySelector(
       '.star-rating-game input.star-radio:checked, #modal-rating input[name="rating_modal"]:checked',
@@ -801,19 +804,17 @@ function parseExistingLogFromGamePage(html, gameId) {
     return { exists: true, logId: null };
   }
 
-  const editHints = [
-    ...doc.querySelectorAll(
-      'a, button, [data-target="#log-modal"], [data-toggle="modal"]',
-    ),
-  ];
-  for (const el of editHints) {
-    const text = String(el.textContent || '').toLowerCase();
-    const href = String(el.getAttribute?.('href') || '');
+  // “Edit your log” — not the generic /u/.../logs/... create link on every game page.
+  for (const el of doc.querySelectorAll('a, button')) {
+    const text = String(el.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
     if (
-      /edit\s*(log|entry)|your\s*log|update\s*log|изменить|редактир|мой\s*лог/i.test(
-        text,
-      ) ||
-      /\/logs\/|log.*edit|edit.*log/i.test(href)
+      /^(edit|update)\s+(your\s+)?(log|entry)\b/.test(text) ||
+      /^(изменить|редактир(овать)?)\s+(лог|запис)/.test(text) ||
+      /^your\s+log\b/.test(text) ||
+      /^мой\s+лог\b/.test(text)
     ) {
       return { exists: true, logId: null };
     }

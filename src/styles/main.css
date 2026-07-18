@@ -2003,3 +2003,216 @@ li.nav-item > #bdt-nav-transfer {
   display: flex;
   justify-content: flex-end;
 }
+
+/* —— About tab —— */
+.bdt-about {
+  display: grid;
+  gap: 1rem;
+}
+
+.bdt-about__hero {
+  position: relative;
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.15rem 1.15rem 1.2rem;
+  border-radius: 14px;
+  border: 1px solid var(--bdt-border);
+  background:
+    radial-gradient(ellipse 80% 70% at 100% 0%, rgba(61, 184, 154, 0.18), transparent 55%),
+    linear-gradient(165deg, #232833 0%, #1a1d24 100%);
+  overflow: hidden;
+}
+
+.bdt-about__eyebrow {
+  margin: 0;
+  color: var(--bdt-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.bdt-about__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.bdt-about__body {
+  margin: 0;
+  max-width: 36rem;
+  color: var(--bdt-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.bdt-about__version {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  background: var(--bdt-accent);
+  color: #0b1210;
+  font-size: 0.72rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.bdt-about__points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.bdt-about__points li {
+  position: relative;
+  padding: 0.65rem 0.8rem 0.65rem 2.1rem;
+  border-radius: 10px;
+  border: 1px solid var(--bdt-border);
+  background: var(--bdt-bg-elevated);
+  color: var(--bdt-text);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.bdt-about__points li::before {
+  content: '';
+  position: absolute;
+  left: 0.8rem;
+  top: 50%;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--bdt-accent);
+  transform: translateY(-50%);
+}
+
+.bdt-about__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.bdt-about__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--bdt-border);
+  background: var(--bdt-bg-elevated);
+  color: var(--bdt-text) !important;
+  text-decoration: none !important;
+  font-size: 0.78rem;
+  font-weight: 650;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.bdt-about__link:hover {
+  border-color: rgba(61, 184, 154, 0.55);
+  background: rgba(61, 184, 154, 0.12);
+}
+
+.bdt-author {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--bdt-border);
+  background:
+    linear-gradient(135deg, rgba(61, 184, 154, 0.08), transparent 42%),
+    var(--bdt-bg-elevated);
+}
+
+.bdt-author__avatar {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 2px solid rgba(61, 184, 154, 0.45);
+  background: var(--bdt-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.bdt-author__body {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.bdt-author__label {
+  margin: 0;
+  color: var(--bdt-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.bdt-author__name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+
+.bdt-author__handle {
+  margin: 0;
+  color: var(--bdt-muted);
+  font-size: 0.84rem;
+}
+
+.bdt-author__email {
+  margin-top: 0.15rem;
+  color: var(--bdt-accent) !important;
+  text-decoration: none !important;
+  font-size: 0.86rem;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.bdt-author__email:hover {
+  text-decoration: underline !important;
+}
+
+.bdt-author__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.85rem;
+  margin-top: 0.45rem;
+}
+
+.bdt-author__links a {
+  color: var(--bdt-text) !important;
+  text-decoration: none !important;
+  font-size: 0.78rem;
+  font-weight: 650;
+  opacity: 0.85;
+}
+
+.bdt-author__links a:hover {
+  color: var(--bdt-accent) !important;
+  opacity: 1;
+}
+
+@media (max-width: 560px) {
+  .bdt-author {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .bdt-author__links {
+    justify-content: center;
+  }
+
+  .bdt-about__version {
+    position: static;
+    justify-self: start;
+  }
+}

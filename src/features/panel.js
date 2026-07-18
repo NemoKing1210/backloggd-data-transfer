@@ -1,4 +1,4 @@
-import { REPO_URL, SCRIPT_VERSION, MATCH_DELAY_MS } from '../constants.js';
+import { AUTHOR, REPO_URL, SCRIPT_VERSION, MATCH_DELAY_MS } from '../constants.js';
 import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
 import { loadCurrentUserLibrary } from '../destinations/backloggd/library.js';
 import { matchTransferEntries } from '../destinations/backloggd/match.js';
@@ -884,12 +884,51 @@ export function openPanel(tab = 'import') {
         </section>
         <section class="bdt-tab-panel" data-bdt-panel="history" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="about" hidden>
-          <p>${escapeHtml(t.aboutBody)}</p>
-          <p>
-            <a href="${escapeAttr(REPO_URL)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutRepo)}</a>
-            ·
-            <a href="${escapeAttr(`${REPO_URL}/blob/main/docs/transfer-format.md`)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutFormat)}</a>
-          </p>
+          <div class="bdt-about">
+            <div class="bdt-about__hero">
+              <div class="bdt-about__hero-text">
+                <p class="bdt-about__eyebrow">${escapeHtml(t.aboutEyebrow)}</p>
+                <h3 class="bdt-about__title">${escapeHtml(t.panelTitle)}</h3>
+                <p class="bdt-about__body">${escapeHtml(t.aboutBody)}</p>
+              </div>
+              <span class="bdt-about__version">v${escapeHtml(SCRIPT_VERSION)}</span>
+            </div>
+
+            <ul class="bdt-about__points">
+              <li>${escapeHtml(t.aboutPointImport)}</li>
+              <li>${escapeHtml(t.aboutPointFormat)}</li>
+              <li>${escapeHtml(t.aboutPointExport)}</li>
+            </ul>
+
+            <div class="bdt-about__links">
+              <a class="bdt-about__link" href="${escapeAttr(REPO_URL)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutRepo)}</a>
+              <a class="bdt-about__link" href="${escapeAttr(`${REPO_URL}/blob/main/docs/transfer-format.md`)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutFormat)}</a>
+              <a class="bdt-about__link" href="${escapeAttr(`${REPO_URL}/issues`)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutIssues)}</a>
+            </div>
+
+            <article class="bdt-author">
+              <img
+                class="bdt-author__avatar"
+                src="${escapeAttr(AUTHOR.avatarUrl)}"
+                alt=""
+                width="72"
+                height="72"
+                loading="lazy"
+                decoding="async"
+              />
+              <div class="bdt-author__body">
+                <p class="bdt-author__label">${escapeHtml(t.aboutAuthorLabel)}</p>
+                <h4 class="bdt-author__name">${escapeHtml(AUTHOR.name)}</h4>
+                <p class="bdt-author__handle">@${escapeHtml(AUTHOR.handle)}</p>
+                <a class="bdt-author__email" href="mailto:${escapeAttr(AUTHOR.email)}">${escapeHtml(AUTHOR.email)}</a>
+                <div class="bdt-author__links">
+                  <a href="${escapeAttr(AUTHOR.githubUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutAuthorGithub)}</a>
+                  <a href="${escapeAttr(AUTHOR.backloggdUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutAuthorBackloggd)}</a>
+                  <a href="${escapeAttr(AUTHOR.profileUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.aboutAuthorProfile)}</a>
+                </div>
+              </div>
+            </article>
+          </div>
         </section>
       </div>
     </div>

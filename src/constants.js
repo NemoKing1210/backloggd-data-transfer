@@ -15,8 +15,16 @@ export const AUTHOR = Object.freeze({
 });
 export const SETTINGS_KEY = 'bdt_settings';
 export const HISTORY_KEY = 'bdt_history';
-/** Remembered CSV status/rating value maps (raw label → target). */
+/** Remembered CSV status/rating/platform value maps (raw label → target). */
 export const CSV_VALUE_MAP_KEY = 'bdt_csv_value_maps';
+/** Game match cache (title → Backloggd id/slug). */
+export const GAME_CACHE_KEY = 'bdt_game_cache_v1';
+/** Soft budget for game cache + related GM blobs shown in the Cache meter. */
+export const CACHE_SOFT_LIMIT_BYTES = 5 * 1024 * 1024;
+/** TTL for successful title→game matches. */
+export const GAME_CACHE_HIT_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+/** TTL for negative (not found) lookups — shorter so retries stay possible. */
+export const GAME_CACHE_MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 /** Keep the latest N transfer sessions in GM storage. */
 export const HISTORY_MAX_ENTRIES = 50;
 export const ROOT_ATTR = 'data-bdt-root';

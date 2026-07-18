@@ -1,4 +1,8 @@
 import { MATCH_DELAY_MS } from '../../constants.js';
+import {
+  getCachedGameMatch,
+  setCachedGameMatch,
+} from '../../cache/games.js';
 import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
 import { libraryHasGame } from './library.js';
@@ -16,12 +20,13 @@ import { backloggdUrl } from './site.js';
  * @property {MatchStatus} status
  * @property {import('./search.js').BackloggdGameMatch | null} match
  * @property {boolean} existingLog
+ * @property {boolean} [fromCache]
  * @property {string} [error]
  */
 
 /**
  * Match each transfer entry against Backloggd autocomplete.
- * Mutates `entry.game_id` / `entry.slug` when a match is found.
+ * Uses the game cache when possible; mutates `entry.game_id` / `entry.slug` on hit.
  *
  * @param {import('../../format/schema.js').TransferDocument} doc
  * @param {{
@@ -30,7 +35,7 @@ import { backloggdUrl } from './site.js';
  *   onProgress?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry, result: EntryMatchResult }) => void,
  *   shouldCancel?: () => boolean,
  * }} [options]
- * @returns {Promise<{ results: EntryMatchResult[], foundCount: number, notFoundCount: number, presetCount: number, errorCount: number, existingCount: number }>}
+ * @returns {Promise<{ results: EntryMatchResult[], foundCount: number, notFoundCount: number, presetCount: number, errorCount: number, existingCount: number, cacheHitCount: number }>}
  */
 export async function matchTransferEntries(doc, options = {}) {
   const entries = doc?.entries || [];
@@ -41,6 +46,7 @@ export async function matchTransferEntries(doc, options = {}) {
   const library = options.library || null;
   /** @type {EntryMatchResult[]} */
   const results = [];
+  let cacheHitCount = 0;
 
   for (let index = 0; index < total; index += 1) {
     if (options.shouldCancel?.()) break;
@@ -48,6 +54,7 @@ export async function matchTransferEntries(doc, options = {}) {
     const entry = entries[index];
     /** @type {EntryMatchResult} */
     let result;
+    let usedNetwork = false;
 
     if (entry.game_id != null) {
       result = {
@@ -65,19 +72,51 @@ export async function matchTransferEntries(doc, options = {}) {
             : '',
         },
         existingLog: libraryHasGame(entry.game_id, entry.slug, library),
+        fromCache: false,
       };
+      // Keep cache warm for title lookups too.
+      const title = entryDisplayTitle(entry);
+      if (title) {
+        setCachedGameMatch(title, {
+          id: entry.game_id,
+          slug: entry.slug || '',
+          title,
+          year: '',
+          score: 100,
+          url: result.match.url || '',
+        });
+      }
     } else {
-      try {
-        const match = await searchBackloggdGame(entryDisplayTitle(entry));
-        if (match) {
-          entry.game_id = match.id;
-          if (match.slug) entry.slug = match.slug;
+      const title = entryDisplayTitle(entry);
+      const cached = getCachedGameMatch(title);
+
+      if (cached) {
+        cacheHitCount += 1;
+        if (cached.kind === 'hit' && cached.match?.id != null) {
+          entry.game_id = cached.match.id;
+          if (cached.match.slug) entry.slug = cached.match.slug;
           result = {
             index,
             entry,
             status: 'found',
-            match,
-            existingLog: libraryHasGame(match.id, match.slug, library),
+            match: {
+              id: cached.match.id,
+              slug: cached.match.slug || '',
+              title: cached.match.title || title,
+              year: cached.match.year || '',
+              score: cached.match.score ?? 100,
+              url:
+                cached.match.url ||
+                (cached.match.slug
+                  ? backloggdUrl(`/games/${encodeURIComponent(cached.match.slug)}/`)
+                  : ''),
+            },
+            existingLog: libraryHasGame(
+              cached.match.id,
+              cached.match.slug,
+              library,
+            ),
+            fromCache: true,
           };
         } else {
           result = {
@@ -86,24 +125,54 @@ export async function matchTransferEntries(doc, options = {}) {
             status: 'not_found',
             match: null,
             existingLog: false,
+            fromCache: true,
           };
         }
-      } catch (err) {
-        result = {
-          index,
-          entry,
-          status: 'error',
-          match: null,
-          existingLog: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
+      } else {
+        usedNetwork = true;
+        try {
+          const match = await searchBackloggdGame(title);
+          setCachedGameMatch(title, match);
+          if (match) {
+            entry.game_id = match.id;
+            if (match.slug) entry.slug = match.slug;
+            result = {
+              index,
+              entry,
+              status: 'found',
+              match,
+              existingLog: libraryHasGame(match.id, match.slug, library),
+              fromCache: false,
+            };
+          } else {
+            result = {
+              index,
+              entry,
+              status: 'not_found',
+              match: null,
+              existingLog: false,
+              fromCache: false,
+            };
+          }
+        } catch (err) {
+          result = {
+            index,
+            entry,
+            status: 'error',
+            match: null,
+            existingLog: false,
+            fromCache: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
       }
     }
 
     results.push(result);
     options.onProgress?.({ index, total, entry, result });
 
-    if (delayMs && index < total - 1 && result.status !== 'preset') {
+    // Skip delay for cache/preset hits — only throttle real network lookups.
+    if (delayMs && index < total - 1 && usedNetwork) {
       await sleepJitter(delayMs);
     }
   }
@@ -116,5 +185,6 @@ export async function matchTransferEntries(doc, options = {}) {
     presetCount: results.filter((r) => r.status === 'preset').length,
     errorCount: results.filter((r) => r.status === 'error').length,
     existingCount: results.filter((r) => r.existingLog).length,
+    cacheHitCount,
   };
 }

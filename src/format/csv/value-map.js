@@ -1,4 +1,11 @@
 import { LOG_STATUS_KEYS, LOG_STATUS_LABELS } from '../../constants.js';
+import {
+  findCanonicalPlatform,
+  isCanonicalPlatformValue,
+  mapPlatformToBackloggd,
+  platformByIdOrName,
+  platformSelectOptions,
+} from '../platforms.js';
 import { normalizeLogStatus, normalizeRating } from '../schema.js';
 import {
   mapRatingToScore10,
@@ -22,6 +29,13 @@ import {
  * }} RatingValueInfo
  *
  * @typedef {{
+ *   raw: string,
+ *   count: number,
+ *   needsMap: boolean,
+ *   suggested: number | null,
+ * }} PlatformValueInfo
+ *
+ * @typedef {{
  *   needed: boolean,
  *   values: StatusValueInfo[],
  *   mappedCount: number,
@@ -34,6 +48,15 @@ import {
  *   mappedCount: number,
  *   unmappedCount: number,
  * }} RatingValueAnalysis
+ *
+ * @typedef {{
+ *   needed: boolean,
+ *   values: PlatformValueInfo[],
+ *   mappedCount: number,
+ *   unmappedCount: number,
+ * }} PlatformValueAnalysis
+ *
+ * @typedef {{ id: number, name: string } | null} ResolvedPlatform
  */
 
 /**
@@ -164,6 +187,50 @@ export function suggestRatingValueMap(analysis) {
 }
 
 /**
+ * @param {Record<string, string>[]} rows
+ * @param {string} header
+ * @returns {PlatformValueAnalysis}
+ */
+export function analyzePlatformValues(rows, header) {
+  const counts = collectColumnValueCounts(rows, header);
+  /** @type {PlatformValueInfo[]} */
+  const values = counts.map(({ raw, count }) => {
+    const needsMap = !isCanonicalPlatformValue(raw);
+    const suggested = needsMap
+      ? mapPlatformToBackloggd(raw)?.id ?? null
+      : findCanonicalPlatform(raw)?.id ?? null;
+    return { raw, count, needsMap, suggested };
+  });
+  const mappedCount = values.filter((v) => v.needsMap && v.suggested != null).length;
+  const unmappedCount = values.filter((v) => v.needsMap && v.suggested == null).length;
+  return {
+    needed: values.some((v) => v.needsMap),
+    values,
+    mappedCount,
+    unmappedCount,
+  };
+}
+
+/**
+ * Default platform raw→id map for UI (empty string = skip).
+ * @param {PlatformValueAnalysis} analysis
+ * @returns {Record<string, string>}
+ */
+export function suggestPlatformValueMap(analysis) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const item of analysis.values || []) {
+    if (!item.needsMap) {
+      const hit = findCanonicalPlatform(item.raw);
+      out[item.raw] = hit ? String(hit.id) : '';
+      continue;
+    }
+    out[item.raw] = item.suggested != null ? String(item.suggested) : '';
+  }
+  return out;
+}
+
+/**
  * Resolve status using user map first, then built-in heuristics.
  * @param {string} raw
  * @param {Record<string, string>} [valueMap]
@@ -216,6 +283,33 @@ export function resolveRatingValue(raw, valueMap) {
   return mapRatingToScore10(s);
 }
 
+/**
+ * Resolve platform using user map first, then built-in aliases.
+ * @param {string} raw
+ * @param {Record<string, string>} [valueMap] raw → platform id string or ""
+ * @returns {ResolvedPlatform}
+ */
+export function resolvePlatformValue(raw, valueMap) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+
+  const fromMap = (mapped) => {
+    if (!mapped) return null;
+    return platformByIdOrName(mapped);
+  };
+
+  if (valueMap && Object.prototype.hasOwnProperty.call(valueMap, s)) {
+    return fromMap(valueMap[s]);
+  }
+  if (valueMap) {
+    const hit = Object.entries(valueMap).find(
+      ([k]) => k.toLowerCase() === s.toLowerCase(),
+    );
+    if (hit) return fromMap(hit[1]);
+  }
+  return mapPlatformToBackloggd(s);
+}
+
 /** Options for status select in value-map UI. */
 export function statusSelectOptions() {
   return LOG_STATUS_KEYS.map((key) => ({
@@ -231,3 +325,6 @@ export function ratingSelectOptions() {
     label: `${score} · ${RATING_SCORE_LABELS[score] || ''} · ${score / 2}★`,
   }));
 }
+
+/** Re-export for UI. */
+export { platformSelectOptions };

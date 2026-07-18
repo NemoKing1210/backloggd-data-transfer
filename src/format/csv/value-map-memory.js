@@ -5,6 +5,7 @@ import { CSV_VALUE_MAP_KEY } from '../../constants.js';
  * @typedef {{
  *   status: Record<string, string>,
  *   rating: Record<string, string>,
+ *   platform: Record<string, string>,
  * }} CsvValueMapMemory
  */
 
@@ -15,22 +16,24 @@ export function loadCsvValueMapMemory() {
   try {
     const raw = GM_getValue(CSV_VALUE_MAP_KEY, null);
     if (!raw || typeof raw !== 'object') {
-      return { status: {}, rating: {} };
+      return emptyMemory();
     }
     return {
       status: normalizeMap(raw.status),
       rating: normalizeMap(raw.rating),
+      platform: normalizeMap(raw.platform),
     };
   } catch (_) {
-    return { status: {}, rating: {} };
+    return emptyMemory();
   }
 }
 
 /**
- * Persist status/rating value maps (keys stored lowercased).
+ * Persist status/rating/platform value maps (keys stored lowercased).
  * @param {{
  *   status?: Record<string, string>,
  *   rating?: Record<string, string>,
+ *   platform?: Record<string, string>,
  * }} valueMaps
  */
 export function rememberCsvValueMaps(valueMaps) {
@@ -38,6 +41,7 @@ export function rememberCsvValueMaps(valueMaps) {
   const next = {
     status: { ...current.status, ...toMemoryEntries(valueMaps?.status) },
     rating: { ...current.rating, ...toMemoryEntries(valueMaps?.rating) },
+    platform: { ...current.platform, ...toMemoryEntries(valueMaps?.platform) },
   };
   try {
     GM_setValue(CSV_VALUE_MAP_KEY, next);
@@ -66,6 +70,11 @@ export function applyRememberedValueMap(suggested, remembered, values) {
     }
   }
   return out;
+}
+
+/** @returns {CsvValueMapMemory} */
+function emptyMemory() {
+  return { status: {}, rating: {}, platform: {} };
 }
 
 /**

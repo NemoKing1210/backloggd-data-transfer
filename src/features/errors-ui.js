@@ -73,7 +73,7 @@ export function collectImportIssues(results, entries) {
   const issues = [];
 
   (results || []).forEach((result, index) => {
-    if (result?.ok) return;
+    if (result?.ok || result?.skipped) return;
     const entry = entries[index];
     const title = entryDisplayTitle(entry) || `#${index + 1}`;
     const detail = result?.error || 'fail';

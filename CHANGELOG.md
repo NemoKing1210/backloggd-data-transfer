@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-07-18
+
+### Added
+
+- Fill percentage badge on the Cache tab.
+
+## [0.3.1] - 2026-07-18
+
+### Changed
+
+- Cache tab shows a prominent fill percentage next to the storage meter.
+
+## [0.3.0] - 2026-07-18
+
+### Added
+
+- Game match cache: title → `game_id` / slug reused on later Reads (skips network + delay on hits).
+- Cache tab with storage meter (games hits/misses, history, CSV maps, settings), stats, recent lookups, and clear actions.
+
+## [0.2.5] - 2026-07-18
+
+### Added
+
+- Show total elapsed time after import (summary, live log, and toast).
+
+## [0.2.4] - 2026-07-18
+
+### Added
+
+- Rich live import log: current game, progress bar, ok/fail/skip counters, and a scrollable result list.
+
+### Fixed
+
+- Unmatched / error rows from the read step are no longer selectable or imported (`game_id not resolved`); skips are logged separately from failures.
+
+## [0.2.3] - 2026-07-18
+
+### Added
+
+- CSV platform value mapping (e.g. `PC` → Windows PC) with a flexible alias catalog and remembered choices.
+
+### Changed
+
+- Status / rating / platform value-mapping blocks are collapsed by default.
+
 ## [0.2.2] - 2026-07-18
 
 ### Added

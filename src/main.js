@@ -1,6 +1,7 @@
 import {
   GM_registerMenuCommand,
 } from '$';
+import { initGameCache } from './cache/games.js';
 import './styles/main.css';
 import { ROOT_ATTR } from './constants.js';
 import { ensureNavButton, openPanel } from './features/panel.js';
@@ -20,6 +21,7 @@ function init() {
   document.documentElement.setAttribute(ROOT_ATTR, '1');
 
   reloadRuntimeSettings();
+  initGameCache();
 
   if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand(t.menuOpen, () => openPanel());

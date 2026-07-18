@@ -4,10 +4,13 @@ import {
   suggestCsvMapping,
 } from '../format/csv/map.js';
 import {
+  analyzePlatformValues,
   analyzeRatingValues,
   analyzeStatusValues,
+  platformSelectOptions,
   ratingSelectOptions,
   statusSelectOptions,
+  suggestPlatformValueMap,
   suggestRatingValueMap,
   suggestStatusValueMap,
 } from '../format/csv/value-map.js';
@@ -17,6 +20,7 @@ import {
   rememberCsvValueMaps,
 } from '../format/csv/value-map-memory.js';
 import { LOG_STATUS_LABELS } from '../constants.js';
+import { platformByIdOrName } from '../format/platforms.js';
 import { RATING_SCORE_LABELS } from '../format/status.js';
 import { t } from '../state.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
@@ -25,11 +29,12 @@ import { escapeAttr, escapeHtml } from '../utils/html.js';
  * @typedef {{
  *   status: Record<string, string>,
  *   rating: Record<string, string>,
+ *   platform: Record<string, string>,
  * }} CsvValueMaps
  */
 
 /**
- * Render CSV column mapping + status/rating value mapping UI.
+ * Render CSV column mapping + status/rating/platform value mapping UI.
  * @param {HTMLElement} root
  * @param {{
  *   headers: string[],
@@ -57,10 +62,16 @@ export function renderCsvMapping(root, options) {
   const ratingAnalysis = mapping.rating
     ? analyzeRatingValues(rows, mapping.rating)
     : null;
+  const platformAnalysis = mapping.platform
+    ? analyzePlatformValues(rows, mapping.platform)
+    : null;
 
   const memory = loadCsvValueMapMemory();
   const suggestedStatus = statusAnalysis ? suggestStatusValueMap(statusAnalysis) : {};
   const suggestedRating = ratingAnalysis ? suggestRatingValueMap(ratingAnalysis) : {};
+  const suggestedPlatform = platformAnalysis
+    ? suggestPlatformValueMap(platformAnalysis)
+    : {};
 
   const valueMaps = {
     status: {
@@ -79,12 +90,21 @@ export function renderCsvMapping(root, options) {
       ),
       ...(options.valueMaps?.rating || {}),
     },
+    platform: {
+      ...applyRememberedValueMap(
+        suggestedPlatform,
+        memory.platform,
+        platformAnalysis?.values || [],
+      ),
+      ...(options.valueMaps?.platform || {}),
+    },
   };
 
   const mappedCount = CSV_TARGET_FIELDS.filter((f) => mapping[f.key]).length;
   const requiredOk = Boolean(mapping.title);
   const statusOpts = statusSelectOptions();
   const ratingOpts = ratingSelectOptions();
+  const platformOpts = platformSelectOptions();
 
   host.hidden = false;
   host.innerHTML = `
@@ -155,6 +175,23 @@ export function renderCsvMapping(root, options) {
               })
             : ''
         }
+        ${
+          platformAnalysis?.needed
+            ? renderValueMapBlock({
+                kind: 'platform',
+                title: t.csvValuePlatformTitle,
+                lead: t.csvValuePlatformLead,
+                analysis: platformAnalysis,
+                valueMap: valueMaps.platform,
+                options: platformOpts,
+                formatTarget: (v) => {
+                  if (!v) return t.csvValueSkip;
+                  const hit = platformByIdOrName(v);
+                  return hit ? hit.name : v;
+                },
+              })
+            : ''
+        }
       </div>
     </div>
   `;
@@ -176,6 +213,10 @@ export function renderCsvMapping(root, options) {
       const nextRatingAnalysis = nextMapping.rating
         ? analyzeRatingValues(rows, nextMapping.rating)
         : null;
+      const nextPlatformAnalysis = nextMapping.platform
+        ? analyzePlatformValues(rows, nextMapping.platform)
+        : null;
+      const currentValues = readCsvValueMaps(root);
       const nextStatus = nextStatusAnalysis
         ? {
             ...applyRememberedValueMap(
@@ -183,7 +224,7 @@ export function renderCsvMapping(root, options) {
               memory.status,
               nextStatusAnalysis.values,
             ),
-            ...readCsvValueMaps(root).status,
+            ...currentValues.status,
           }
         : {};
       const nextRating = nextRatingAnalysis
@@ -193,17 +234,32 @@ export function renderCsvMapping(root, options) {
               memory.rating,
               nextRatingAnalysis.values,
             ),
-            ...readCsvValueMaps(root).rating,
+            ...currentValues.rating,
           }
         : {};
+      const nextPlatform = nextPlatformAnalysis
+        ? {
+            ...applyRememberedValueMap(
+              suggestPlatformValueMap(nextPlatformAnalysis),
+              memory.platform,
+              nextPlatformAnalysis.values,
+            ),
+            ...currentValues.platform,
+          }
+        : {};
+      const nextValueMaps = {
+        status: nextStatus,
+        rating: nextRating,
+        platform: nextPlatform,
+      };
       options.onChange?.({
         mapping: nextMapping,
-        valueMaps: { status: nextStatus, rating: nextRating },
+        valueMaps: nextValueMaps,
       });
       renderCsvMapping(root, {
         ...options,
         mapping: nextMapping,
-        valueMaps: { status: nextStatus, rating: nextRating },
+        valueMaps: nextValueMaps,
       });
     });
   });
@@ -225,10 +281,11 @@ export function renderCsvMapping(root, options) {
           preview.textContent = value
             ? `${n} · ${RATING_SCORE_LABELS[n] || ''} · ${n / 2}★`
             : t.csvValueSkip;
+        } else if (kind === 'platform') {
+          const hit = value ? platformByIdOrName(value) : null;
+          preview.textContent = hit ? hit.name : t.csvValueSkip;
         }
       }
-      row?.classList.toggle('is-mapped', Boolean(value));
-      row?.classList.toggle('is-unmapped', !value && row.classList.contains('is-unmapped') !== false);
       if (row && !row.classList.contains('is-native')) {
         row.classList.toggle('is-mapped', Boolean(value));
         row.classList.toggle('is-unmapped', !value);
@@ -261,11 +318,16 @@ export function readCsvMapping(root) {
  */
 export function readCsvValueMaps(root) {
   /** @type {CsvValueMaps} */
-  const valueMaps = { status: {}, rating: {} };
+  const valueMaps = { status: {}, rating: {}, platform: {} };
   root.querySelectorAll('[data-bdt-csv-value]').forEach((el) => {
     const kind = el.getAttribute('data-bdt-csv-value-kind');
     const raw = el.getAttribute('data-bdt-csv-value');
-    if ((kind !== 'status' && kind !== 'rating') || raw == null) return;
+    if (
+      (kind !== 'status' && kind !== 'rating' && kind !== 'platform') ||
+      raw == null
+    ) {
+      return;
+    }
     valueMaps[kind][raw] = /** @type {HTMLSelectElement} */ (el).value || '';
   });
   return valueMaps;
@@ -283,7 +345,7 @@ export function clearCsvMapping(root) {
 
 /**
  * @param {{
- *   kind: 'status' | 'rating',
+ *   kind: 'status' | 'rating' | 'platform',
  *   title: string,
  *   lead: string,
  *   analysis: { values: { raw: string, count: number, needsMap: boolean, suggested: unknown }[], mappedCount: number, unmappedCount: number },
@@ -294,24 +356,29 @@ export function clearCsvMapping(root) {
  */
 function renderValueMapBlock(cfg) {
   const warn = cfg.analysis.unmappedCount > 0;
+  const badgeText = warn
+    ? fmtLocal(t.csvValueUnmappedStat, { count: cfg.analysis.unmappedCount })
+    : t.csvValueAllMapped;
+
   return `
-    <section class="bdt-csv-vmap ${warn ? 'is-warn' : 'is-ok'}">
-      <div class="bdt-csv-vmap__head">
-        <div>
-          <h4 class="bdt-csv-vmap__title">${escapeHtml(cfg.title)}</h4>
-          <p class="bdt-csv-vmap__lead">${escapeHtml(cfg.lead)}</p>
+    <details class="bdt-csv-vmap ${warn ? 'is-warn' : 'is-ok'}">
+      <summary class="bdt-csv-vmap__summary">
+        <div class="bdt-csv-vmap__summary-main">
+          <span class="bdt-csv-vmap__chevron" aria-hidden="true"></span>
+          <div>
+            <h4 class="bdt-csv-vmap__title">${escapeHtml(cfg.title)}</h4>
+            <p class="bdt-csv-vmap__lead">${escapeHtml(cfg.lead)}</p>
+          </div>
         </div>
         <div class="bdt-csv-vmap__badges">
           <span class="bdt-csv-vmap__badge">${escapeHtml(
             fmtLocal(t.csvValueUniqueStat, { count: cfg.analysis.values.length }),
           )}</span>
           <span class="bdt-csv-vmap__badge ${warn ? 'is-warn' : 'is-ok'}">${escapeHtml(
-            warn
-              ? fmtLocal(t.csvValueUnmappedStat, { count: cfg.analysis.unmappedCount })
-              : t.csvValueAllMapped,
+            badgeText,
           )}</span>
         </div>
-      </div>
+      </summary>
       <div class="bdt-csv-vmap__table-wrap">
         <table class="bdt-csv-vmap__table">
           <thead>
@@ -372,7 +439,7 @@ function renderValueMapBlock(cfg) {
           </tbody>
         </table>
       </div>
-    </section>
+    </details>
   `;
 }
 

@@ -1,6 +1,10 @@
 import { createDocument } from '../schema.js';
 import { parseFavorite } from '../status.js';
-import { resolveRatingValue, resolveStatusValue } from './value-map.js';
+import {
+  resolvePlatformValue,
+  resolveRatingValue,
+  resolveStatusValue,
+} from './value-map.js';
 
 /**
  * @typedef {{
@@ -180,6 +184,7 @@ export function validateCsvMapping(mapping) {
  *   valueMaps?: {
  *     status?: Record<string, string>,
  *     rating?: Record<string, string>,
+ *     platform?: Record<string, string>,
  *   },
  * }} input
  */
@@ -189,6 +194,7 @@ export function buildTransferFromCsv(input) {
   if (!check.ok) return { ok: false, error: check.error };
   const statusMap = input.valueMaps?.status || {};
   const ratingMap = input.valueMaps?.rating || {};
+  const platformMap = input.valueMaps?.platform || {};
 
   /** @type {object[]} */
   const entries = [];
@@ -200,7 +206,12 @@ export function buildTransferFromCsv(input) {
     const status = resolveStatusValue(cell(row, mapping.status), statusMap);
     const rating = resolveRatingValue(cell(row, mapping.rating), ratingMap);
     const favorite = parseFavorite(cell(row, mapping.favorite));
-    const platform = cell(row, mapping.platform).trim();
+    const resolvedPlatform = resolvePlatformValue(
+      cell(row, mapping.platform),
+      platformMap,
+    );
+    const platformLabel = resolvedPlatform?.name || '';
+    const platformId = resolvedPlatform?.id ?? null;
     const start = cell(row, mapping.start_date);
     const finish = cell(row, mapping.finish_date);
     const review = cell(row, mapping.review);
@@ -209,41 +220,34 @@ export function buildTransferFromCsv(input) {
     const gameId = /^\d+$/.test(gameIdRaw) ? Number(gameIdRaw) : null;
     const hours = parseHours(cell(row, mapping.hours));
 
+    const whole = hours != null ? Math.floor(hours) : null;
+    const mins =
+      hours != null ? Math.round((hours - Math.floor(hours)) * 60) || null : null;
+
     /** @type {Record<string, unknown>} */
     const entry = {
       title,
       game_id: gameId,
       slug,
-      status,
-      favorite,
-      rating,
-      review,
-      platform,
-      start_date: start,
-      finish_date: finish,
-    };
-
-    if (hours != null) {
-      const whole = Math.floor(hours);
-      const mins = Math.round((hours - whole) * 60) || null;
-      entry.log = {
+      log: {
         status,
         game_liked: favorite,
-        total_hours: whole || null,
+        total_hours: whole,
         total_minutes: mins,
-      };
-      entry.playthroughs = [
+      },
+      playthroughs: [
         {
-          title: platform,
+          title: platformLabel,
+          platform: platformId,
           rating,
           review,
           start_date: start,
           finish_date: finish,
-          hours_played: whole || null,
+          hours_played: whole,
           mins_played: mins,
         },
-      ];
-    }
+      ],
+    };
 
     entries.push(entry);
   }

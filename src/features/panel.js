@@ -13,6 +13,14 @@ import { reloadRuntimeSettings, settings, t } from '../state.js';
 import { downloadBlob, readFileAsText } from '../utils/download.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
 import {
+  appendImportLogResult,
+  beginImportLog,
+  clearImportLog,
+  finishImportLog,
+  formatImportDuration,
+  setImportLogCurrent,
+} from './import-log-ui.js';
+import {
   getSelectedMatchIndices,
   renderMatchTable,
   setMatchProgress,
@@ -21,6 +29,7 @@ import { clearReadErrors, clearImportErrors, collectImportIssues, collectReadIss
 import { clearCsvMapping, readCsvMapping, readCsvValueMaps, renderCsvMapping } from './csv-map-ui.js';
 import { rememberCsvValueMaps } from '../format/csv/value-map-memory.js';
 import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
+import { renderCachePanel, syncCacheTabBadge } from './cache-ui.js';
 import { showToast } from './toast.js';
 import {
   findBackloggdUserId,
@@ -44,7 +53,7 @@ let csvData = null;
 /** @type {Record<string, string>} */
 let csvMapping = {};
 /** @type {{ status: Record<string, string>, rating: Record<string, string> }} */
-let csvValueMaps = { status: {}, rating: {} };
+let csvValueMaps = { status: {}, rating: {}, platform: {} };
 /** @type {'json' | 'csv'} */
 let importFormat = 'json';
 /** @type {string | null} */
@@ -238,7 +247,7 @@ function setImportStep(root, step) {
 function goBackToFile(root) {
   csvData = null;
   csvMapping = {};
-  csvValueMaps = { status: {}, rating: {} };
+  csvValueMaps = { status: {}, rating: {}, platform: {} };
   resetAnalysisUi(root);
   setImportStep(root, 'file');
   syncActionButtons(root);
@@ -278,7 +287,7 @@ function goBackToReview(root) {
 
 /**
  * @param {HTMLElement} root
- * @param {{ okCount: number, failCount: number, results?: object[] }} summary
+ * @param {{ okCount: number, failCount: number, skipCount?: number, results?: object[], elapsedMs?: number }} summary
  * @param {import('../format/schema.js').TransferEntry[]} entries
  */
 function renderImportResult(root, summary, entries) {
@@ -288,7 +297,8 @@ function renderImportResult(root, summary, entries) {
   const authGate = root.querySelector('[data-bdt-import-auth]');
   if (authGate) authGate.hidden = true;
 
-  const allOk = summary.failCount === 0;
+  const skipCount = Number(summary.skipCount) || 0;
+  const allOk = summary.failCount === 0 && skipCount === 0;
   const allFailed = summary.okCount === 0 && summary.failCount > 0;
   const orbClass = allOk
     ? 'bdt-stage__orb--done'
@@ -301,16 +311,28 @@ function renderImportResult(root, summary, entries) {
       ? t.importFailedTitle
       : t.importPartialTitle;
 
+  const countsLine = fmt(t.importDoneWithSkip, {
+    ok: summary.okCount,
+    fail: summary.failCount,
+    skip: skipCount,
+  });
+  const elapsedLine =
+    summary.elapsedMs != null
+      ? fmt(t.importElapsedLabel, {
+          time: formatImportDuration(summary.elapsedMs),
+        })
+      : '';
+
   statusEl.hidden = false;
   statusEl.innerHTML = `
     <div class="bdt-stage__orb ${orbClass}" aria-hidden="true"></div>
     <h3 class="bdt-stage__title">${escapeHtml(title)}</h3>
-    <p class="bdt-stage__text">${escapeHtml(
-      fmt(t.importDone, {
-        ok: summary.okCount,
-        fail: summary.failCount,
-      }),
-    )}</p>
+    <p class="bdt-stage__text">${escapeHtml(countsLine)}</p>
+    ${
+      elapsedLine
+        ? `<p class="bdt-stage__meta">${escapeHtml(elapsedLine)}</p>`
+        : ''
+    }
   `;
 
   renderImportErrors(root, collectImportIssues(summary.results || [], entries));
@@ -325,16 +347,12 @@ function prepareImportGate(root) {
   setImportStep(root, 'done');
 
   const statusEl = root.querySelector('[data-bdt-import-status]');
-  const logEl = root.querySelector('[data-bdt-log]');
 
   if (statusEl) {
     statusEl.hidden = true;
     statusEl.innerHTML = '';
   }
-  if (logEl) {
-    logEl.hidden = true;
-    logEl.textContent = '';
-  }
+  clearImportLog(root);
   clearImportErrors(root);
 }
 
@@ -446,7 +464,6 @@ function showImportUserIdGate(root, importDoc) {
 async function runImport(root, importDoc) {
   const authGate = root.querySelector('[data-bdt-import-auth]');
   const statusEl = root.querySelector('[data-bdt-import-status]');
-  const logEl = root.querySelector('[data-bdt-log]');
   const importBtn = root.querySelector('[data-bdt-import]');
 
   if (importBtn) importBtn.disabled = true;
@@ -459,41 +476,69 @@ async function runImport(root, importDoc) {
     authGate.innerHTML = '';
   }
 
+  const total = importDoc.entries.length;
+
   if (statusEl) {
     statusEl.hidden = false;
     statusEl.innerHTML = `
       <div class="bdt-stage__orb" aria-hidden="true"></div>
       <h3 class="bdt-stage__title">${escapeHtml(t.importStepImportingTitle)}</h3>
-      <p class="bdt-stage__text">${escapeHtml(fmt(t.importStepImportingLead, { count: importDoc.entries.length }))}</p>
+      <p class="bdt-stage__text">${escapeHtml(fmt(t.importStepImportingLead, { count: total }))}</p>
     `;
   }
 
-  if (logEl) {
-    logEl.hidden = false;
-    logEl.textContent = '';
-  }
+  beginImportLog(root, { total });
+
+  /** @type {{ ok: number, fail: number, skip: number, total: number, elapsedMs?: number }} */
+  const counts = { ok: 0, fail: 0, skip: 0, total };
+  const startedAt = performance.now();
 
   try {
     const summary = await importTransferToBackloggd(importDoc, {
       dryRun: false,
       delayMs: settings.importDelayMs,
-      onProgress({ index, total, entry, result }) {
-        const line = fmt(t.importProgress, {
-          index: index + 1,
-          total,
+      onItemStart({ index, total: tot, entry }) {
+        setImportLogCurrent(root, {
+          index,
+          total: tot,
           title: entryDisplayTitle(entry),
         });
-        const status = result.ok
-          ? t.importLogOk
-          : fmt(t.importLogFail, { error: result.error || 'fail' });
-        if (logEl) {
-          logEl.textContent += `${line} — ${status}\n`;
-          logEl.scrollTop = logEl.scrollHeight;
+      },
+      onProgress({ index, total: tot, entry, result }) {
+        const title = entryDisplayTitle(entry);
+
+        let kind = 'fail';
+        if (result.ok) {
+          kind = 'ok';
+          counts.ok += 1;
+        } else if (result.skipped) {
+          kind = 'skip';
+          counts.skip += 1;
+        } else {
+          counts.fail += 1;
         }
+
+        appendImportLogResult(root, {
+          index,
+          total: tot,
+          title,
+          kind,
+          detail: result.error || '',
+          counts: { ...counts },
+        });
       },
     });
 
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    counts.ok = summary.okCount;
+    counts.fail = summary.failCount;
+    counts.skip = Number(summary.skipCount) || 0;
+    counts.total = summary.total ?? total;
+    counts.elapsedMs = elapsedMs;
+    summary.elapsedMs = elapsedMs;
+
     setImportStep(root, 'done');
+    finishImportLog(root, counts);
     renderImportResult(root, summary, importDoc.entries);
 
     try {
@@ -509,26 +554,30 @@ async function runImport(root, importDoc) {
     }
 
     const toastType =
-      summary.failCount === 0
+      summary.failCount === 0 && counts.skip === 0
         ? 'success'
-        : summary.okCount === 0
+        : summary.okCount === 0 && summary.failCount > 0
           ? 'error'
           : 'warning';
     const toastTitle =
-      summary.failCount === 0
+      summary.failCount === 0 && counts.skip === 0
         ? t.importDoneTitle
-        : summary.okCount === 0
+        : summary.okCount === 0 && summary.failCount > 0
           ? t.importFailedTitle
           : t.importPartialTitle;
 
     showToast(
-      fmt(t.importDone, {
+      `${fmt(t.importDoneWithSkip, {
         ok: summary.okCount,
         fail: summary.failCount,
-      }),
+        skip: counts.skip,
+      })} · ${fmt(t.importElapsed, {
+        time: formatImportDuration(elapsedMs),
+      })}`,
       { type: toastType, title: toastTitle },
     );
   } catch (err) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
     setImportStep(root, 'done');
     const message = err instanceof Error ? err.message : String(err);
     if (statusEl) {
@@ -537,6 +586,11 @@ async function runImport(root, importDoc) {
         <div class="bdt-stage__orb bdt-stage__orb--fail" aria-hidden="true"></div>
         <h3 class="bdt-stage__title">${escapeHtml(t.importFailedTitle)}</h3>
         <p class="bdt-stage__text">${escapeHtml(message)}</p>
+        <p class="bdt-stage__meta">${escapeHtml(
+          fmt(t.importElapsedLabel, {
+            time: formatImportDuration(elapsedMs),
+          }),
+        )}</p>
       `;
     }
     renderImportErrors(root, [
@@ -546,10 +600,11 @@ async function runImport(root, importDoc) {
         detail: message,
       },
     ]);
-    if (logEl) {
-      logEl.hidden = false;
-      logEl.textContent = message;
-    }
+    finishImportLog(root, {
+      ...counts,
+      elapsedMs,
+      doneTitle: t.importFailedTitle,
+    });
     showToast(message, { type: 'error', title: t.importFailedTitle });
   } finally {
     syncImportButton(root);
@@ -656,11 +711,13 @@ async function runMatchAndReview(root, doc) {
       },
     });
     syncImportButton(root);
+    syncCacheTabBadge(root);
     showToast(
-      fmt(t.importAnalyzed, {
+      fmt(t.importAnalyzedWithCache, {
         count: analysis.total,
         found: analysis.foundCount,
         missing: analysis.notFoundCount,
+        cached: matchSummary.cacheHitCount || 0,
       }),
       {
         type: analysis.notFoundCount ? 'warning' : 'success',
@@ -696,7 +753,7 @@ function clearPendingFile(root) {
   pendingFile = null;
   csvData = null;
   csvMapping = {};
-  csvValueMaps = { status: {}, rating: {} };
+  csvValueMaps = { status: {}, rating: {}, platform: {} };
   const input = root.querySelector('[data-bdt-file]');
   if (input) input.value = '';
   updateDropzoneUi(root);
@@ -927,7 +984,7 @@ export function openPanel(tab = 'import') {
   loadedDoc = null;
   csvData = null;
   csvMapping = {};
-  csvValueMaps = { status: {}, rating: {} };
+  csvValueMaps = { status: {}, rating: {}, platform: {} };
   importStep = 'file';
   mappingReady = false;
   reviewReady = false;
@@ -965,6 +1022,10 @@ export function openPanel(tab = 'import') {
         <button type="button" class="bdt-tab" data-bdt-tab="history" role="tab">
           ${escapeHtml(t.tabHistory)}
           <span class="bdt-tab__badge" data-bdt-history-badge hidden>0</span>
+        </button>
+        <button type="button" class="bdt-tab" data-bdt-tab="cache" role="tab">
+          ${escapeHtml(t.tabCache)}
+          <span class="bdt-tab__badge" data-bdt-cache-badge>0%</span>
         </button>
         <button type="button" class="bdt-tab" data-bdt-tab="about" role="tab">${escapeHtml(t.tabAbout)}</button>
       </nav>
@@ -1100,7 +1161,7 @@ export function openPanel(tab = 'import') {
               <div class="bdt-auth-gate" data-bdt-import-auth hidden></div>
               <div class="bdt-stage__hero" data-bdt-import-status></div>
               <div class="bdt-errors" data-bdt-import-errors hidden></div>
-              <pre class="bdt-log" data-bdt-log hidden></pre>
+              <div class="bdt-import-log" data-bdt-log hidden></div>
               <div class="bdt-stage__footer">
                 <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-back-review>${escapeHtml(t.importBackReview)}</button>
                 <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-restart>${escapeHtml(t.importRestart)}</button>
@@ -1123,6 +1184,7 @@ export function openPanel(tab = 'import') {
           </div>
         </section>
         <section class="bdt-tab-panel" data-bdt-panel="history" hidden></section>
+        <section class="bdt-tab-panel" data-bdt-panel="cache" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="about" hidden>
           <div class="bdt-about">
             <div class="bdt-about__hero">
@@ -1177,6 +1239,7 @@ export function openPanel(tab = 'import') {
   document.body.appendChild(backdrop);
   lockPageScroll();
   syncHistoryTabBadge(backdrop);
+  syncCacheTabBadge(backdrop);
 
   const close = () => closePanel();
   backdrop.addEventListener('click', (e) => {
@@ -1346,7 +1409,7 @@ export function openPanel(tab = 'import') {
         }
         csvData = parsed;
         csvMapping = suggestCsvMapping(parsed.headers);
-        csvValueMaps = { status: {}, rating: {} };
+        csvValueMaps = { status: {}, rating: {}, platform: {} };
         mappingReady = true;
         renderCsvMapping(backdrop, {
           headers: parsed.headers,
@@ -1408,9 +1471,23 @@ export function openPanel(tab = 'import') {
       return;
     }
 
+    const importEntries = loadedDoc.entries.filter((entry, index) => {
+      if (!selectedIndices.has(index)) return false;
+      if (entry.game_id == null) return false;
+      return true;
+    });
+
+    if (!importEntries.length) {
+      showToast(t.importNeedResolvable, {
+        type: 'warning',
+        title: t.importNeedResolvableTitle,
+      });
+      return;
+    }
+
     const importDoc = {
       ...loadedDoc,
-      entries: loadedDoc.entries.filter((_, index) => selectedIndices.has(index)),
+      entries: importEntries,
     };
 
     if (!isLoggedIn()) {
@@ -1487,6 +1564,9 @@ function selectTab(backdrop, tab) {
   if (tab === 'history') {
     renderHistoryPanel(backdrop);
   }
+  if (tab === 'cache') {
+    renderCachePanel(backdrop);
+  }
 }
 
 export function closePanel() {
@@ -1496,7 +1576,7 @@ export function closePanel() {
   loadedDoc = null;
   csvData = null;
   csvMapping = {};
-  csvValueMaps = { status: {}, rating: {} };
+  csvValueMaps = { status: {}, rating: {}, platform: {} };
   importStep = 'file';
   mappingReady = false;
   reviewReady = false;

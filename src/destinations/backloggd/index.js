@@ -2,7 +2,6 @@ import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { createBackloggdLog } from './create-log.js';
-import { searchBackloggdGame } from './search.js';
 
 /**
  * Import a transfer document into Backloggd (sequential, rate-limited).
@@ -12,6 +11,7 @@ import { searchBackloggdGame } from './search.js';
  *   dryRun?: boolean,
  *   delayMs?: number,
  *   onProgress?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry, result: object }) => void,
+ *   onItemStart?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry }) => void,
  *   shouldCancel?: () => boolean,
  * }} [options]
  */
@@ -43,6 +43,7 @@ export async function importTransferToBackloggd(doc, options = {}) {
           ],
           okCount: 0,
           failCount: 1,
+          skipCount: 0,
           total,
           dryRun,
         };
@@ -53,6 +54,7 @@ export async function importTransferToBackloggd(doc, options = {}) {
         results: [{ ok: false, error }],
         okCount: 0,
         failCount: 1,
+        skipCount: 0,
         total,
         dryRun,
       };
@@ -64,27 +66,13 @@ export async function importTransferToBackloggd(doc, options = {}) {
       break;
     }
     const entry = entries[index];
-    let resolved = null;
-    try {
-      if (entry.game_id != null) {
-        resolved = {
-          slug: entry.slug || '',
-          title: entryDisplayTitle(entry),
-          url: '',
-          game_id: entry.game_id,
-        };
-      } else {
-        resolved = await searchBackloggdGame(entryDisplayTitle(entry));
-        if (resolved?.id != null) {
-          entry.game_id = resolved.id;
-          if (resolved.slug) entry.slug = resolved.slug;
-          resolved = { ...resolved, game_id: resolved.id };
-        }
-      }
-    } catch (err) {
+    options.onItemStart?.({ index, total, entry });
+
+    if (entry.game_id == null) {
       const result = {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        skipped: true,
+        error: 'no match from read step',
       };
       results.push(result);
       options.onProgress?.({ index, total, entry, result });
@@ -92,17 +80,12 @@ export async function importTransferToBackloggd(doc, options = {}) {
       continue;
     }
 
-    if (!resolved?.game_id && entry.game_id == null) {
-      const result = {
-        ok: false,
-        error: 'game_id not resolved',
-        skipped: true,
-      };
-      results.push(result);
-      options.onProgress?.({ index, total, entry, result });
-      if (delayMs) await sleepJitter(delayMs);
-      continue;
-    }
+    const resolved = {
+      slug: entry.slug || '',
+      title: entryDisplayTitle(entry),
+      url: '',
+      game_id: entry.game_id,
+    };
 
     let result = await createBackloggdLog(entry, {
       dryRun,
@@ -134,6 +117,7 @@ export async function importTransferToBackloggd(doc, options = {}) {
   }
 
   const okCount = results.filter((r) => r.ok).length;
-  const failCount = results.length - okCount;
-  return { results, okCount, failCount, total, dryRun };
+  const skipCount = results.filter((r) => !r.ok && r.skipped).length;
+  const failCount = results.filter((r) => !r.ok && !r.skipped).length;
+  return { results, okCount, failCount, skipCount, total, dryRun };
 }

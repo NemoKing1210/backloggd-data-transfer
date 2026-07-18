@@ -36,15 +36,17 @@ export function renderMatchTable(root, results, options = {}) {
       const link = row.match?.url
         ? `<a href="${escapeAttr(row.match.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(matchedTitle)}</a>`
         : escapeHtml(matchedTitle);
-      const checked = row.existingLog ? importExisting : true;
+      const importable = row.status === 'found' || row.status === 'preset';
+      const checked = importable && (row.existingLog ? importExisting : true);
       const existingLabel = row.existingLog
         ? t.importMatchExistingYes
         : t.importMatchExistingNo;
 
       return `
         <tr
-          class="bdt-match-row bdt-match-row--${escapeAttr(row.status)}${row.existingLog ? ' bdt-match-row--existing' : ''}"
+          class="bdt-match-row bdt-match-row--${escapeAttr(row.status)}${row.existingLog ? ' bdt-match-row--existing' : ''}${importable ? '' : ' bdt-match-row--blocked'}"
           data-existing="${row.existingLog ? '1' : '0'}"
+          data-importable="${importable ? '1' : '0'}"
         >
           <td class="bdt-match-col-check">
             <input
@@ -53,6 +55,8 @@ export function renderMatchTable(root, results, options = {}) {
               data-bdt-match-select
               value="${row.index}"
               ${checked ? 'checked' : ''}
+              ${importable ? '' : 'disabled'}
+              title="${escapeAttr(importable ? '' : t.importMatchBlockedHint)}"
               aria-label="${escapeAttr(fmt(t.importMatchSelectRow, { title }))}"
             />
           </td>
@@ -64,6 +68,11 @@ export function renderMatchTable(root, results, options = {}) {
           <td>${pt.rating == null ? '—' : escapeHtml(String(pt.rating))}</td>
           <td>${escapeHtml(pt.title || '—')}</td>
           <td><span class="bdt-match-pill bdt-match-pill--${escapeAttr(row.status)}">${escapeHtml(matchStatusLabel(row.status))}</span></td>
+          <td>
+            <span class="bdt-match-pill bdt-match-pill--${row.fromCache ? 'cached' : 'live'}">${escapeHtml(
+              row.fromCache ? t.importMatchCached : t.importMatchLive,
+            )}</span>
+          </td>
           <td>
             <span class="bdt-match-pill bdt-match-pill--${row.existingLog ? 'existing' : 'new'}">${escapeHtml(existingLabel)}</span>
           </td>
@@ -108,6 +117,7 @@ export function renderMatchTable(root, results, options = {}) {
             <th>${escapeHtml(t.importMatchColRating)}</th>
             <th>${escapeHtml(t.importMatchColPlatform)}</th>
             <th>${escapeHtml(t.importMatchColResult)}</th>
+            <th>${escapeHtml(t.importMatchColSource)}</th>
             <th>${escapeHtml(t.importMatchColExisting)}</th>
             <th>${escapeHtml(t.importMatchColSiteTitle)}</th>
             <th>${escapeHtml(t.importMatchColGameId)}</th>
@@ -128,9 +138,12 @@ export function renderMatchTable(root, results, options = {}) {
  * @returns {number[]}
  */
 export function getSelectedMatchIndices(root) {
-  return [...root.querySelectorAll('[data-bdt-match-select]:checked')].map((el) =>
-    Number(/** @type {HTMLInputElement} */ (el).value),
-  );
+  return [...root.querySelectorAll('[data-bdt-match-select]:checked')]
+    .filter((el) => {
+      const row = el.closest('tr');
+      return row?.getAttribute('data-importable') !== '0';
+    })
+    .map((el) => Number(/** @type {HTMLInputElement} */ (el).value));
 }
 
 /**
@@ -156,12 +169,19 @@ function bindMatchSelection(wrap, options) {
   const isExistingRow = (box) =>
     box.closest('tr')?.getAttribute('data-existing') === '1';
 
+  const isImportableRow = (box) =>
+    box.closest('tr')?.getAttribute('data-importable') !== '0';
+
   const importExistingEnabled = () => Boolean(existingToggle?.checked);
 
   selectAll?.addEventListener('change', () => {
     const checked = Boolean(selectAll.checked);
     const allowExisting = importExistingEnabled();
     for (const box of rowChecks()) {
+      if (!isImportableRow(box) || box.disabled) {
+        box.checked = false;
+        continue;
+      }
       if (checked && isExistingRow(box) && !allowExisting) {
         box.checked = false;
         continue;
@@ -202,10 +222,13 @@ function syncMatchSelectionUi(wrap, onSelectionChange) {
   );
   const allowExisting = Boolean(existingToggle?.checked);
   const selectable = boxes.filter((box) => {
-    const existing = box.closest('tr')?.getAttribute('data-existing') === '1';
+    if (box.disabled) return false;
+    const row = box.closest('tr');
+    if (row?.getAttribute('data-importable') === '0') return false;
+    const existing = row?.getAttribute('data-existing') === '1';
     return allowExisting || !existing;
   });
-  const selected = boxes.filter((box) => box.checked).length;
+  const selected = boxes.filter((box) => box.checked && !box.disabled).length;
   const total = boxes.length;
   const selectableChecked = selectable.filter((box) => box.checked).length;
 

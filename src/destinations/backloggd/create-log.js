@@ -1,4 +1,5 @@
 import { entryDisplayTitle, primaryPlaythrough } from '../../format/schema.js';
+import { mapPlatformToBackloggd } from '../../format/platforms.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { backloggdUrl } from './site.js';
 
@@ -23,7 +24,7 @@ export function buildLogFormBody(entry, ids) {
   const body = {
     game_id: gameId,
     'playthroughs[0][id]': '-1',
-    'playthroughs[0][title]': pt.title || 'Log',
+    'playthroughs[0][title]': resolvePlaythroughTitle(pt),
     'playthroughs[0][rating]': pt.rating == null ? '' : String(pt.rating),
     'playthroughs[0][sync_sessions]': String(Boolean(pt.sync_sessions)),
     'playthroughs[0][review]': pt.review || '',
@@ -71,7 +72,7 @@ export function buildLogFormBody(entry, ids) {
     modal_type: 'full',
   };
 
-  const sessions = entry.dates || [];
+  const sessions = resolveDateSessions(entry, pt);
   sessions.forEach((session, i) => {
     const prefix = `dates[-1][${i}]`;
     body[`${prefix}[id]`] = '-1';
@@ -89,6 +90,45 @@ export function buildLogFormBody(entry, ids) {
   });
 
   return body;
+}
+
+/**
+ * Prefer explicit `dates[]`; otherwise derive a journal session from
+ * playthrough start/finish so Started/Finished on actually persist.
+ * @param {import('../../format/schema.js').TransferEntry} entry
+ * @param {import('../../format/schema.js').TransferPlaythrough} pt
+ */
+function resolveDateSessions(entry, pt) {
+  const existing = entry.dates || [];
+  if (existing.length) return existing;
+
+  const start = pt.start_date || '';
+  const finish = pt.finish_date || '';
+  if (!start && !finish) return [];
+
+  return [
+    {
+      range_start_date: start || finish,
+      range_end_date: finish || start,
+      status: null,
+      note: '',
+      hours: null,
+      minutes: null,
+      start_date: start,
+      finish_date: finish,
+    },
+  ];
+}
+
+/**
+ * Default log tab is "Log". Older imports mistakenly put the platform name here.
+ * @param {import('../../format/schema.js').TransferPlaythrough} pt
+ */
+function resolvePlaythroughTitle(pt) {
+  const title = String(pt.title || '').trim();
+  if (!title || title === 'Log') return 'Log';
+  if (mapPlatformToBackloggd(title)) return 'Log';
+  return title;
 }
 
 /**

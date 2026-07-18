@@ -51,8 +51,8 @@ li.nav-item > #bdt-nav-transfer {
 }
 
 .bdt-panel {
-  width: min(1040px, 100%);
-  max-height: min(92vh, 920px);
+  width: min(1560px, 100%);
+  max-height: min(96vh, 1380px);
   display: flex;
   flex-direction: column;
   overflow: hidden;

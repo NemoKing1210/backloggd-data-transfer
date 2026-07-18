@@ -210,7 +210,6 @@ export function buildTransferFromCsv(input) {
       cell(row, mapping.platform),
       platformMap,
     );
-    const platformLabel = resolvedPlatform?.name || '';
     const platformId = resolvedPlatform?.id ?? null;
     const start = cell(row, mapping.start_date);
     const finish = cell(row, mapping.finish_date);
@@ -237,7 +236,7 @@ export function buildTransferFromCsv(input) {
       },
       playthroughs: [
         {
-          title: platformLabel,
+          title: 'Log',
           platform: platformId,
           rating,
           review,
@@ -247,6 +246,17 @@ export function buildTransferFromCsv(input) {
           mins_played: mins,
         },
       ],
+      dates:
+        start || finish
+          ? [
+              {
+                range_start_date: start || finish,
+                range_end_date: finish || start,
+                start_date: start,
+                finish_date: finish,
+              },
+            ]
+          : [],
     };
 
     entries.push(entry);

@@ -54,7 +54,7 @@ Current version: **2**.
   },
   "playthroughs": [
     {
-      "title": "Windows PC",
+      "title": "Log",
       "rating": 5,
       "review": "",
       "review_spoilers": false,
@@ -118,7 +118,7 @@ Current version: **2**.
 
 | Field | Form key | Notes |
 |-------|----------|--------|
-| `title` | `playthroughs[0][title]` | Platform label (`Windows PC`) |
+| `title` | `playthroughs[0][title]` | Log tab name (default `Log`) |
 | `rating` | `playthroughs[0][rating]` | **1–10** half-star scale |
 | `review` | `playthroughs[0][review]` | |
 | `review_spoilers` | `playthroughs[0][review_spoilers]` | |

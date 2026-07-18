@@ -3,6 +3,7 @@ import {
   TRANSFER_FORMAT_ID,
   TRANSFER_FORMAT_VERSION,
 } from '../constants.js';
+import { mapPlatformToBackloggd } from './platforms.js';
 
 /**
  * Transfer JSON mirrors Backloggd’s log POST body
@@ -37,7 +38,7 @@ import {
 
 /**
  * @typedef {object} TransferPlaythrough
- * @property {string} title           Platform label, e.g. "Windows PC"
+ * @property {string} title           Log tab name; default "Log"
  * @property {number|null} rating     Backloggd 1–10 half-star scale
  * @property {string} review
  * @property {boolean} review_spoilers
@@ -198,7 +199,7 @@ export function createLog(partial = {}) {
  */
 export function createPlaythrough(partial = {}) {
   return {
-    title: String(partial.title || '').trim(),
+    title: String(partial.title || 'Log').trim() || 'Log',
     rating: normalizeRating(partial.rating),
     review: String(partial.review || ''),
     review_spoilers: toBool(partial.review_spoilers, false),
@@ -255,6 +256,7 @@ export function migrateV1Entry(raw) {
   );
   const start = normalizeDate(raw.dateStart || raw.start_date);
   const end = normalizeDate(raw.dateEnd || raw.finish_date);
+  const resolvedPlatform = mapPlatformToBackloggd(raw.platform);
 
   return {
     game_id: raw.game_id ?? raw.externalIds?.backloggd ?? null,
@@ -270,7 +272,8 @@ export function migrateV1Entry(raw) {
     },
     playthroughs: [
       {
-        title: raw.platform || '',
+        title: 'Log',
+        platform: resolvedPlatform?.id ?? null,
         rating: raw.rating,
         review: raw.review || '',
         start_date: start,
@@ -301,16 +304,33 @@ export function createEntry(partial = {}) {
   const playthroughs = Array.isArray(raw.playthroughs)
     ? raw.playthroughs.map((p) => createPlaythrough(p))
     : [createPlaythrough({})];
-  const dates = Array.isArray(raw.dates)
+  const playthroughsOrDefault = playthroughs.length
+    ? playthroughs
+    : [createPlaythrough({})];
+  let dates = Array.isArray(raw.dates)
     ? raw.dates.map((d) => createDateSession(d))
     : [];
+
+  if (!dates.length) {
+    const pt = playthroughsOrDefault[0];
+    if (pt.start_date || pt.finish_date) {
+      dates = [
+        createDateSession({
+          range_start_date: pt.start_date || pt.finish_date,
+          range_end_date: pt.finish_date || pt.start_date,
+          start_date: pt.start_date,
+          finish_date: pt.finish_date,
+        }),
+      ];
+    }
+  }
 
   return {
     game_id: toNullableNumber(raw.game_id),
     title,
     slug: String(raw.slug || '').trim(),
     log: createLog(raw.log && typeof raw.log === 'object' ? raw.log : {}),
-    playthroughs: playthroughs.length ? playthroughs : [createPlaythrough({})],
+    playthroughs: playthroughsOrDefault,
     dates,
   };
 }

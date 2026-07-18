@@ -1,6 +1,6 @@
 /**
  * Backloggd platform catalog (IGDB-aligned ids) with flexible aliases.
- * `name` is the label used in `playthroughs[0][title]` (e.g. "Windows PC").
+ * `name` is the catalog label (e.g. "Windows PC"); log tab title stays "Log".
  *
  * @typedef {{
  *   id: number,

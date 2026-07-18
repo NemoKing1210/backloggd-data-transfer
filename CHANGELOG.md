@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] - 2026-07-18
+
+### Changed
+
+- Transfer panel is ~1.5× larger (up to 1560×1380).
+
+## [0.3.7] - 2026-07-18
+
+### Fixed
+
+- Import now writes start/finish dates (journal session derived from playthrough dates when `dates[]` is missing).
+- Log tab title defaults to `Log` instead of the platform name.
+
 ## [0.3.6] - 2026-07-18
 
 ### Added

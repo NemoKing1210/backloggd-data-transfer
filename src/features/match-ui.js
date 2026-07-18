@@ -1,4 +1,5 @@
 import { statusDisplayLabel } from '../format/analyze.js';
+import { platformByIdOrName } from '../format/platforms.js';
 import { entryDisplayTitle, primaryPlaythrough } from '../format/schema.js';
 import { fmt } from '../i18n/index.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
@@ -41,6 +42,8 @@ export function renderMatchTable(root, results, options = {}) {
       const existingLabel = row.existingLog
         ? t.importMatchExistingYes
         : t.importMatchExistingNo;
+      const platformLabel =
+        platformByIdOrName(pt.platform)?.name || '—';
 
       return `
         <tr
@@ -68,7 +71,7 @@ export function renderMatchTable(root, results, options = {}) {
           <td>${escapeHtml(pt.start_date || '—')}</td>
           <td>${escapeHtml(pt.finish_date || '—')}</td>
           <td>${pt.rating == null ? '—' : escapeHtml(String(pt.rating))}</td>
-          <td>${escapeHtml(pt.title || '—')}</td>
+          <td>${escapeHtml(platformLabel)}</td>
           <td><span class="bdt-match-pill bdt-match-pill--${escapeAttr(row.status)}">${escapeHtml(matchStatusLabel(row.status))}</span></td>
           <td>
             <span class="bdt-match-pill bdt-match-pill--${row.fromCache ? 'cached' : 'live'}">${escapeHtml(

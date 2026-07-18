@@ -27,7 +27,7 @@ export function createExampleTransferDocument() {
         },
         playthroughs: [
           {
-            title: 'Windows PC',
+            title: 'Log',
             rating: 5,
             review: '',
             review_spoilers: false,
@@ -73,7 +73,7 @@ export function createExampleTransferDocument() {
         },
         playthroughs: [
           {
-            title: 'Windows PC',
+            title: 'Log',
             platform: 6,
             rating: null,
             review: '',

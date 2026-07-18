@@ -5,9 +5,10 @@ import {
 } from '../../cache/games.js';
 import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
-import { libraryHasGame } from './library.js';
+import { libraryHasGame, probeUserHasLog } from './library.js';
 import { searchBackloggdGame } from './search.js';
 import { backloggdUrl } from './site.js';
+import { getCurrentUsername } from './user.js';
 
 /**
  * @typedef {'found' | 'not_found' | 'preset' | 'error'} MatchStatus
@@ -44,6 +45,7 @@ export async function matchTransferEntries(doc, options = {}) {
     ? Math.max(0, options.delayMs)
     : MATCH_DELAY_MS;
   const library = options.library || null;
+  const username = getCurrentUsername();
   /** @type {EntryMatchResult[]} */
   const results = [];
   let cacheHitCount = 0;
@@ -71,7 +73,7 @@ export async function matchTransferEntries(doc, options = {}) {
             ? backloggdUrl(`/games/${encodeURIComponent(entry.slug)}/`)
             : '',
         },
-        existingLog: libraryHasGame(entry.game_id, entry.slug, library),
+        existingLog: false,
         fromCache: false,
       };
       // Keep cache warm for title lookups too.
@@ -111,11 +113,7 @@ export async function matchTransferEntries(doc, options = {}) {
                   ? backloggdUrl(`/games/${encodeURIComponent(cached.match.slug)}/`)
                   : ''),
             },
-            existingLog: libraryHasGame(
-              cached.match.id,
-              cached.match.slug,
-              library,
-            ),
+            existingLog: false,
             fromCache: true,
           };
         } else {
@@ -141,7 +139,7 @@ export async function matchTransferEntries(doc, options = {}) {
               entry,
               status: 'found',
               match,
-              existingLog: libraryHasGame(match.id, match.slug, library),
+              existingLog: false,
               fromCache: false,
             };
           } else {
@@ -168,6 +166,25 @@ export async function matchTransferEntries(doc, options = {}) {
       }
     }
 
+    if (
+      (result.status === 'found' || result.status === 'preset') &&
+      (result.match?.id != null || entry.game_id != null)
+    ) {
+      const gameId = result.match?.id ?? entry.game_id;
+      const slug = result.match?.slug || entry.slug || '';
+      const existing = await resolveExistingLog({
+        gameId,
+        slug,
+        library,
+        username,
+      });
+      result.existingLog = existing;
+      if (existing && library) {
+        if (gameId != null) library.gameIds.add(Number(gameId));
+        if (slug) library.slugs.add(String(slug).toLowerCase());
+      }
+    }
+
     results.push(result);
     options.onProgress?.({ index, total, entry, result });
 
@@ -187,4 +204,35 @@ export async function matchTransferEntries(doc, options = {}) {
     existingCount: results.filter((r) => r.existingLog).length,
     cacheHitCount,
   };
+}
+
+/**
+ * @param {{
+ *   gameId: number | null | undefined,
+ *   slug?: string,
+ *   library?: import('./library.js').UserLibraryIndex | null,
+ *   username?: string,
+ * }} input
+ */
+async function resolveExistingLog(input) {
+  if (libraryHasGame(input.gameId, input.slug, input.library)) return true;
+  if (input.gameId == null) return false;
+  try {
+    const probe = await probeUserHasLog({
+      gameId: Number(input.gameId),
+      slug: input.slug,
+      username: input.username,
+    });
+    // Light throttle — probe hits /logs/{slug}/ per miss.
+    await sleepJitter(140, {
+      minFactor: 0.7,
+      maxFactor: 1.5,
+      pauseChance: 0.05,
+      pauseMinMs: 80,
+      pauseMaxMs: 320,
+    });
+    return probe.exists;
+  } catch (_) {
+    return false;
+  }
 }

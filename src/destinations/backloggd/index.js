@@ -2,7 +2,12 @@ import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { createBackloggdLog } from './create-log.js';
-import { libraryHasGame, probeUserHasLog } from './library.js';
+import {
+  libraryHasGame,
+  probeUserHasLog,
+  rememberLibraryGame,
+} from './library.js';
+import { getCurrentUsername } from './user.js';
 
 /**
  * Import a transfer document into Backloggd (sequential, rate-limited).
@@ -94,9 +99,15 @@ export async function importTransferToBackloggd(doc, options = {}) {
           const probe = await probeUserHasLog({
             gameId: entry.game_id,
             slug: entry.slug,
-            userId,
+            username: getCurrentUsername(),
           });
           already = probe.exists;
+          if (already) {
+            rememberLibraryGame(library, {
+              gameId: entry.game_id,
+              slug: entry.slug,
+            });
+          }
         } catch (_) {
           /* if probe fails, continue to create — better than hard-stop */
         }
@@ -142,6 +153,13 @@ export async function importTransferToBackloggd(doc, options = {}) {
         resolved,
         userId,
         csrfToken: getCsrfToken() || csrfToken,
+      });
+    }
+
+    if (result.ok) {
+      rememberLibraryGame(library, {
+        gameId: entry.game_id,
+        slug: entry.slug,
       });
     }
 

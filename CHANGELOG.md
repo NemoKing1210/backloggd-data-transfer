@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-07-18
+
+### Added
+
+- Filters on the match results table: your log (already have / new), match status, cache vs live, and selection.
+
+## [0.3.5] - 2026-07-18
+
+### Changed
+
+- Deduplicate import list by title before matching; summary and read-issues list report which duplicates were removed.
+
+## [0.3.4] - 2026-07-18
+
+### Fixed
+
+- Library detection during Read used fragile `/games/added/…` pagination and could miss existing logs; now scrapes main shelves with `?page=` + duplicate-page stop, and re-probes each game before import when “Import existing” is off (skips instead of creating duplicates).
+
 ## [0.3.3] - 2026-07-18
 
 ### Changed

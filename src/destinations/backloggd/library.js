@@ -1,21 +1,29 @@
 import { LIBRARY_PAGE_DELAY_MS } from '../../constants.js';
 import { gmRequest } from '../../gm.js';
 import { sleepJitter } from '../../utils/delay.js';
-import { backloggdOrigin, backloggdUrl } from './site.js';
+import { backloggdUrl } from './site.js';
 import { getCurrentUsername } from './user.js';
 
-/** Library list paths under `/u/{user}/games/added/`. */
-const LIBRARY_LISTS = Object.freeze([
-  'type:played',
-  'type:playing',
-  'type:backlog',
-  'type:wishlist',
-  'game_status:shelved',
-  'game_status:abandoned',
-  'game_status:retired',
+/**
+ * Primary shelves users see in the navbar.
+ * Prefer these over /games/added/… filters — pagination there is unreliable.
+ * Path without trailing slash: Backloggd can 403 `/games/` on some CDNs.
+ */
+const LIBRARY_SHELVES = Object.freeze([
+  'games',
+  'playing',
+  'backlog',
+  'wishlist',
 ]);
 
-const MAX_PAGES_PER_LIST = 80;
+/** Extra status filters (may overlap with Played). */
+const LIBRARY_STATUS_FILTERS = Object.freeze([
+  'games/added/game_status:shelved',
+  'games/added/game_status:abandoned',
+  'games/added/game_status:retired',
+]);
+
+const MAX_PAGES_PER_SHELF = 120;
 
 /**
  * @typedef {object} UserLibraryIndex
@@ -49,32 +57,38 @@ export async function loadCurrentUserLibrary(options = {}) {
   /** @type {string | null} */
   let lastError = null;
 
-  for (let listIndex = 0; listIndex < LIBRARY_LISTS.length; listIndex += 1) {
+  const lists = [
+    ...LIBRARY_SHELVES.map((s) => ({ key: s, path: `/u/${encodeURIComponent(username)}/${s}` })),
+    ...LIBRARY_STATUS_FILTERS.map((s) => ({
+      key: s,
+      path: `/u/${encodeURIComponent(username)}/${s}`,
+    })),
+  ];
+
+  for (let listIndex = 0; listIndex < lists.length; listIndex += 1) {
     if (options.shouldCancel?.()) break;
 
-    const list = LIBRARY_LISTS[listIndex];
-    let url = backloggdUrl(
-      `/u/${encodeURIComponent(username)}/games/added/${list}/`,
-    );
-    let page = 0;
+    const { key, path } = lists[listIndex];
+    /** @type {string | null} */
+    let previousFingerprint = null;
 
-    while (url && page < MAX_PAGES_PER_LIST) {
+    for (let page = 1; page <= MAX_PAGES_PER_SHELF; page += 1) {
       if (options.shouldCancel?.()) break;
 
-      page += 1;
       options.onProgress?.({
         listIndex,
-        listTotal: LIBRARY_LISTS.length,
+        listTotal: lists.length,
         page,
-        list,
+        list: key,
       });
 
+      const url = backloggdUrl(`${path}?page=${page}`);
       let html;
       try {
         html = await fetchLibraryHtml(url);
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
-        // Missing filter / empty shelf — skip this list.
+        // First page missing / blocked — skip this shelf.
         if (page === 1) break;
         throw err instanceof Error ? err : new Error(String(err));
       }
@@ -82,22 +96,31 @@ export async function loadCurrentUserLibrary(options = {}) {
       loadedAnyPage = true;
       pageCount += 1;
       const parsed = parseLibraryPage(html);
+
+      // Empty page → end of shelf.
+      if (!parsed.gameIds.length && !parsed.slugs.length) break;
+
+      // Backloggd often re-serves the last page forever — stop on repeat.
+      const fingerprint = parsed.gameIds.join(',') || parsed.slugs.join(',');
+      if (fingerprint && fingerprint === previousFingerprint) break;
+      previousFingerprint = fingerprint;
+
       for (const id of parsed.gameIds) gameIds.add(id);
       for (const slug of parsed.slugs) slugs.add(slug);
 
-      url = parsed.nextUrl;
-      if (url) {
-        await sleepJitter(LIBRARY_PAGE_DELAY_MS, {
-          minFactor: 0.75,
-          maxFactor: 1.8,
-          pauseChance: 0.1,
-          pauseMinMs: 200,
-          pauseMaxMs: 900,
-        });
-      }
+      // No next hint and short page — likely last.
+      if (!parsed.hasNextHint && parsed.gameIds.length < 12) break;
+
+      await sleepJitter(LIBRARY_PAGE_DELAY_MS, {
+        minFactor: 0.75,
+        maxFactor: 1.8,
+        pauseChance: 0.1,
+        pauseMinMs: 200,
+        pauseMaxMs: 900,
+      });
     }
 
-    if (listIndex < LIBRARY_LISTS.length - 1 && !options.shouldCancel?.()) {
+    if (listIndex < lists.length - 1 && !options.shouldCancel?.()) {
       await sleepJitter(LIBRARY_PAGE_DELAY_MS * 1.4, {
         minFactor: 0.8,
         maxFactor: 1.7,
@@ -129,6 +152,156 @@ export function libraryHasGame(gameId, slug, library) {
     .toLowerCase();
   if (normalized && library.slugs.has(normalized)) return true;
   return false;
+}
+
+/**
+ * Live check whether the logged-in user already has a log for this game.
+ * Used as a safety net before POST (library scrape can miss games).
+ *
+ * @param {{
+ *   gameId: number,
+ *   slug?: string,
+ *   userId?: number,
+ * }} input
+ * @returns {Promise<{ exists: boolean, logId?: number | null }>}
+ */
+export async function probeUserHasLog(input) {
+  const gameId = Number(input.gameId);
+  if (!Number.isFinite(gameId) || gameId <= 0) {
+    return { exists: false };
+  }
+
+  // 1) Game page HTML — most reliable when we have a slug (same session cookies).
+  const slug = String(input.slug || '').trim();
+  if (slug) {
+    try {
+      const html = await fetchLibraryHtml(
+        backloggdUrl(`/games/${encodeURIComponent(slug)}/`),
+      );
+      const fromPage = parseExistingLogFromGamePage(html, gameId);
+      if (fromPage.exists) return fromPage;
+    } catch (_) {
+      /* try API next */
+    }
+  }
+
+  // 2) Log API GET (when available).
+  const userId = Number(input.userId);
+  if (Number.isFinite(userId) && userId > 0) {
+    try {
+      const res = await fetch(
+        backloggdUrl(`/api/user/${userId}/log/${gameId}`),
+        {
+          method: 'GET',
+          credentials: 'same-origin',
+          headers: {
+            Accept: 'application/json, text/javascript, */*; q=0.01',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        },
+      );
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const logId = extractLogId(data);
+        if (logId != null) return { exists: true, logId };
+        // 200 with empty / placeholder — treat as unknown, don't assume missing.
+        if (data && typeof data === 'object' && Object.keys(data).length) {
+          return { exists: true, logId: null };
+        }
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  return { exists: false };
+}
+
+/**
+ * @param {string} html
+ * @param {number} [gameId]
+ */
+function parseExistingLogFromGamePage(html, gameId) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+
+  // Explicit log id on the editor form.
+  const logIdInput =
+    doc.querySelector('input[name="log[id]"]') ||
+    doc.querySelector('#log_id') ||
+    doc.querySelector('[name="log[id]"]');
+  const logIdRaw = logIdInput?.getAttribute?.('value') ?? logIdInput?.value;
+  if (logIdRaw != null && String(logIdRaw).trim() !== '') {
+    const logId = Number(logIdRaw);
+    if (Number.isFinite(logId) && logId > 0) {
+      return { exists: true, logId };
+    }
+  }
+
+  // "Edit" / existing log CTAs on the game page.
+  const editHints = [
+    ...doc.querySelectorAll(
+      'a, button, [data-target="#log-modal"], [data-toggle="modal"]',
+    ),
+  ];
+  for (const el of editHints) {
+    const text = String(el.textContent || '').toLowerCase();
+    const href = String(el.getAttribute?.('href') || '');
+    if (
+      /edit\s*(log|entry)|your\s*log|update\s*log|изменить|редактир/i.test(
+        text,
+      ) ||
+      /log.*edit|edit.*log/i.test(href)
+    ) {
+      return { exists: true, logId: null };
+    }
+  }
+
+  // Cover / rating widget tied to this game for the current user.
+  if (gameId != null) {
+    const cover = doc.querySelector(
+      `.game-cover[game_id="${gameId}"], [game_id="${gameId}"]`,
+    );
+    if (
+      cover &&
+      (cover.getAttribute('data-rating') ||
+        cover.querySelector('.stars-top, .user-rating, .rating'))
+    ) {
+      return { exists: true, logId: null };
+    }
+  }
+
+  // Journal / activity blurb: "You logged …"
+  const bodyText = doc.body?.textContent || '';
+  if (/you (logged|played|rated)|вы (залог|оценили|прошли)/i.test(bodyText)) {
+    // Too broad alone — only if combined with log modal markup.
+    if (doc.querySelector('#log-modal, #log_form, form[action*="/log/"]')) {
+      const hasFilled =
+        doc.querySelector('input[name="log[status]"][value]:not([value=""])') ||
+        doc.querySelector('select[name="log[status]"] option[selected]');
+      if (hasFilled) return { exists: true, logId: null };
+    }
+  }
+
+  return { exists: false };
+}
+
+/**
+ * @param {unknown} data
+ * @returns {number | null}
+ */
+function extractLogId(data) {
+  if (!data || typeof data !== 'object') return null;
+  const raw =
+    /** @type {Record<string, unknown>} */ (data).id ??
+    /** @type {Record<string, unknown>} */ (data).log_id ??
+    (/** @type {Record<string, unknown>} */ (data).log &&
+      typeof /** @type {Record<string, unknown>} */ (data).log === 'object'
+      ? /** @type {Record<string, unknown>} */ (
+          /** @type {Record<string, unknown>} */ (data).log
+        ).id
+      : null);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /**
@@ -165,7 +338,7 @@ async function fetchLibraryHtml(url) {
 
 /**
  * @param {string} html
- * @returns {{ gameIds: number[], slugs: string[], nextUrl: string | null }}
+ * @returns {{ gameIds: number[], slugs: string[], hasNextHint: boolean }}
  */
 function parseLibraryPage(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -173,23 +346,46 @@ function parseLibraryPage(html) {
   const gameIds = [];
   /** @type {string[]} */
   const slugs = [];
+  const seenIds = new Set();
+  const seenSlugs = new Set();
 
-  doc.querySelectorAll('[game_id]').forEach((el) => {
+  // Prefer cover cards — canonical place for game_id on profile grids.
+  doc.querySelectorAll('.game-cover[game_id], [game_id].game-cover, .rating-hover .game-cover').forEach((el) => {
     const id = Number(el.getAttribute('game_id'));
-    if (Number.isFinite(id) && id > 0) gameIds.push(id);
+    if (!Number.isFinite(id) || id <= 0 || seenIds.has(id)) return;
+    seenIds.add(id);
+    gameIds.push(id);
   });
+
+  // Fallback: any game_id attribute on the page.
+  if (!gameIds.length) {
+    doc.querySelectorAll('[game_id]').forEach((el) => {
+      const id = Number(el.getAttribute('game_id'));
+      if (!Number.isFinite(id) || id <= 0 || seenIds.has(id)) return;
+      seenIds.add(id);
+      gameIds.push(id);
+    });
+  }
 
   doc.querySelectorAll('a[href*="/games/"]').forEach((el) => {
     const href = el.getAttribute('href') || '';
     const match = href.match(/\/games\/([^/?#]+)/i);
-    if (match?.[1]) slugs.push(decodeURIComponent(match[1]).toLowerCase());
+    if (!match?.[1]) return;
+    const slug = decodeURIComponent(match[1]).toLowerCase();
+    if (!slug || seenSlugs.has(slug)) return;
+    seenSlugs.add(slug);
+    slugs.push(slug);
   });
 
-  const nextHref =
-    doc.querySelector('a[rel="next"]')?.getAttribute('href') ||
-    doc.querySelector('.pagination a[rel="next"]')?.getAttribute('href') ||
-    '';
-  const nextUrl = nextHref ? new URL(nextHref, backloggdOrigin()).href : null;
+  const hasNextHint = Boolean(
+    doc.querySelector('a[rel="next"]') ||
+      doc.querySelector('.pagination a[rel="next"]') ||
+      doc.querySelector('.pagination .next:not(.disabled)') ||
+      /[?&]page=\d+/.test(
+        doc.querySelector('.pagination a[href*="page="]')?.getAttribute('href') ||
+          '',
+      ),
+  );
 
-  return { gameIds, slugs, nextUrl };
+  return { gameIds, slugs, hasNextHint };
 }

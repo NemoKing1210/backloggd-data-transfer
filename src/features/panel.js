@@ -3,6 +3,7 @@ import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
 import { loadCurrentUserLibrary } from '../destinations/backloggd/library.js';
 import { matchTransferEntries } from '../destinations/backloggd/match.js';
 import { analyzeTransferDocument, statusDisplayLabel } from '../format/analyze.js';
+import { dedupeEntriesByTitle } from '../format/dedupe.js';
 import { createExampleTransferDocument } from '../format/example.js';
 import { parseTransferDocument } from '../format/parse.js';
 import { entryDisplayTitle } from '../format/schema.js';
@@ -46,6 +47,8 @@ export const NAV_BTN_ID = 'bdt-nav-transfer';
 
 /** @type {import('../format/schema.js').TransferDocument | null} */
 let loadedDoc = null;
+/** @type {import('../destinations/backloggd/library.js').UserLibraryIndex | null} */
+let lastLibrary = null;
 /** @type {File | null} */
 let pendingFile = null;
 /** @type {{ headers: string[], rows: Record<string, string>[], rowCount: number } | null} */
@@ -130,6 +133,7 @@ export function ensureNavButton() {
 
 function resetAnalysisUi(root) {
   loadedDoc = null;
+  lastLibrary = null;
   mappingReady = false;
   reviewReady = false;
   importReady = false;
@@ -259,6 +263,7 @@ function goBackToMapping(root) {
     return;
   }
   loadedDoc = null;
+  lastLibrary = null;
   reviewReady = false;
   importReady = false;
   mappingReady = true;
@@ -497,6 +502,8 @@ async function runImport(root, importDoc) {
     const summary = await importTransferToBackloggd(importDoc, {
       dryRun: false,
       delayMs: settings.importDelayMs,
+      importExisting: settings.importExisting === true,
+      library: lastLibrary,
       onItemStart({ index, total: tot, entry }) {
         setImportLogCurrent(root, {
           index,
@@ -624,8 +631,6 @@ async function runMatchAndReview(root, doc) {
   setImportStep(root, 'reading');
 
   try {
-    const total = loadedDoc.entries.length;
-
     setMatchProgress(root, {
       visible: true,
       current: 0,
@@ -654,8 +659,10 @@ async function runMatchAndReview(root, doc) {
           });
         },
       });
+      lastLibrary = library;
     } catch (err) {
       if (runId !== matchRunId) return;
+      lastLibrary = null;
       libraryError = err instanceof Error ? err.message : String(err);
       showToast(fmt(t.importLibraryFailed, { error: libraryError }), {
         type: 'warning',
@@ -665,10 +672,16 @@ async function runMatchAndReview(root, doc) {
 
     if (runId !== matchRunId) return;
 
+    const deduped = dedupeEntriesByTitle(loadedDoc.entries);
+    loadedDoc = {
+      ...loadedDoc,
+      entries: deduped.entries,
+    };
+
     setMatchProgress(root, {
       visible: true,
       current: 0,
-      total: Math.max(total, 1),
+      total: Math.max(loadedDoc.entries.length, 1),
       title: '',
       reset: true,
     });
@@ -695,9 +708,21 @@ async function runMatchAndReview(root, doc) {
       foundCount: matchSummary.foundCount,
       notFoundCount: matchSummary.notFoundCount + matchSummary.errorCount,
       existingCount: matchSummary.existingCount,
+      originalTotal: deduped.originalCount,
+      duplicatesRemoved: deduped.removedCount,
     });
     renderSummary(root, analysis);
-    renderReadErrors(root, collectReadIssues(matchSummary.results, libraryError));
+    const readIssues = collectReadIssues(
+      matchSummary.results,
+      libraryError,
+      deduped.duplicateGroups,
+    );
+    renderReadErrors(root, readIssues);
+    // Open the issues block when duplicates (or other issues) need attention.
+    if (deduped.removedCount > 0) {
+      const details = root.querySelector('[data-bdt-errors] details');
+      if (details) details.open = true;
+    }
     reviewReady = true;
     setImportStep(root, 'review');
     renderMatchTable(root, matchSummary.results, {
@@ -713,14 +738,23 @@ async function runMatchAndReview(root, doc) {
     syncImportButton(root);
     syncCacheTabBadge(root);
     showToast(
-      fmt(t.importAnalyzedWithCache, {
-        count: analysis.total,
-        found: analysis.foundCount,
-        missing: analysis.notFoundCount,
-        cached: matchSummary.cacheHitCount || 0,
-      }),
+      deduped.removedCount > 0
+        ? fmt(t.importAnalyzedWithDedupe, {
+            count: analysis.total,
+            found: analysis.foundCount,
+            missing: analysis.notFoundCount,
+            cached: matchSummary.cacheHitCount || 0,
+            removed: deduped.removedCount,
+          })
+        : fmt(t.importAnalyzedWithCache, {
+            count: analysis.total,
+            found: analysis.foundCount,
+            missing: analysis.notFoundCount,
+            cached: matchSummary.cacheHitCount || 0,
+          }),
       {
-        type: analysis.notFoundCount ? 'warning' : 'success',
+        type:
+          analysis.notFoundCount || deduped.removedCount ? 'warning' : 'success',
         title: t.importAnalyzedTitle,
       },
     );
@@ -900,18 +934,19 @@ function renderSummary(root, analysis) {
     .join('');
 
   const detailItems = [
-    [t.importStatUnique, analysis.uniqueTitles],
-    [t.importStatDuplicates, analysis.duplicates],
-    [t.importStatExisting, analysis.existingCount],
-    [t.importStatRated, analysis.withRating],
-    [t.importStatFavorites, analysis.favorites],
-    [t.importStatDates, analysis.withDates],
-    [t.importStatReviews, analysis.withReview],
-    [t.importStatGameId, analysis.withGameId],
+    [t.importStatOriginal, analysis.originalTotal ?? analysis.total, false],
+    [t.importStatUnique, analysis.uniqueTitles, false],
+    [t.importStatDuplicates, analysis.duplicates, analysis.duplicates > 0],
+    [t.importStatExisting, analysis.existingCount, false],
+    [t.importStatRated, analysis.withRating, false],
+    [t.importStatFavorites, analysis.favorites, false],
+    [t.importStatDates, analysis.withDates, false],
+    [t.importStatReviews, analysis.withReview, false],
+    [t.importStatGameId, analysis.withGameId, false],
   ]
     .map(
-      ([label, value]) =>
-        `<li class="bdt-summary__detail"><span>${escapeHtml(label)}</span><strong>${value}</strong></li>`,
+      ([label, value, warn]) =>
+        `<li class="bdt-summary__detail${warn ? ' is-warn' : ''}"><span>${escapeHtml(String(label))}</span><strong>${escapeHtml(String(value))}</strong></li>`,
     )
     .join('');
 
@@ -982,6 +1017,7 @@ export function openPanel(tab = 'import') {
   reloadRuntimeSettings();
   pendingFile = null;
   loadedDoc = null;
+  lastLibrary = null;
   csvData = null;
   csvMapping = {};
   csvValueMaps = { status: {}, rating: {}, platform: {} };
@@ -1574,6 +1610,7 @@ export function closePanel() {
   unlockPageScroll();
   pendingFile = null;
   loadedDoc = null;
+  lastLibrary = null;
   csvData = null;
   csvMapping = {};
   csvValueMaps = { status: {}, rating: {}, platform: {} };

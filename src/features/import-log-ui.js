@@ -289,8 +289,12 @@ function statChip(kind, value, label) {
 function statusLabel(kind, detail) {
   if (kind === 'ok') return t.importLogOk;
   if (kind === 'skip') {
-    return detail
-      ? fmt(t.importLogSkipDetail, { reason: detail })
+    const reason =
+      detail === 'already in library'
+        ? t.importLogSkipExisting
+        : detail || '';
+    return reason
+      ? fmt(t.importLogSkipDetail, { reason })
       : t.importLogSkip;
   }
   if (kind === 'fail') {

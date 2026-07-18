@@ -47,6 +47,8 @@ export function renderMatchTable(root, results, options = {}) {
           class="bdt-match-row bdt-match-row--${escapeAttr(row.status)}${row.existingLog ? ' bdt-match-row--existing' : ''}${importable ? '' : ' bdt-match-row--blocked'}"
           data-existing="${row.existingLog ? '1' : '0'}"
           data-importable="${importable ? '1' : '0'}"
+          data-status="${escapeAttr(row.status)}"
+          data-source="${row.fromCache ? 'cache' : 'live'}"
         >
           <td class="bdt-match-col-check">
             <input
@@ -96,6 +98,46 @@ export function renderMatchTable(root, results, options = {}) {
         <span class="bdt-toggle__label">${escapeHtml(t.importExistingToggle)}</span>
       </label>
     </div>
+    <div class="bdt-match-filters" role="group" aria-label="${escapeAttr(t.importMatchFiltersLabel)}">
+      ${filterSelect(
+        'existing',
+        t.importMatchFilterExisting,
+        [
+          ['all', t.importMatchFilterAll],
+          ['yes', t.importMatchExistingYes],
+          ['no', t.importMatchExistingNo],
+        ],
+      )}
+      ${filterSelect(
+        'status',
+        t.importMatchFilterStatus,
+        [
+          ['all', t.importMatchFilterAll],
+          ['found', t.importMatchFound],
+          ['preset', t.importMatchPreset],
+          ['not_found', t.importMatchNotFound],
+          ['error', t.importMatchError],
+        ],
+      )}
+      ${filterSelect(
+        'source',
+        t.importMatchFilterSource,
+        [
+          ['all', t.importMatchFilterAll],
+          ['cache', t.importMatchCached],
+          ['live', t.importMatchLive],
+        ],
+      )}
+      ${filterSelect(
+        'selected',
+        t.importMatchFilterSelected,
+        [
+          ['all', t.importMatchFilterAll],
+          ['on', t.importMatchFilterSelectedOn],
+          ['off', t.importMatchFilterSelectedOff],
+        ],
+      )}
+    </div>
     <div class="bdt-match-scroll">
       <table class="bdt-match-table">
         <thead>
@@ -130,7 +172,30 @@ export function renderMatchTable(root, results, options = {}) {
   `;
   wrap.hidden = false;
   bindMatchSelection(wrap, options);
+  applyMatchFilters(wrap);
   syncMatchSelectionUi(wrap, options.onSelectionChange);
+}
+
+/**
+ * @param {'existing' | 'status' | 'source' | 'selected'} key
+ * @param {string} label
+ * @param {[string, string][]} options
+ */
+function filterSelect(key, label, options) {
+  const opts = options
+    .map(
+      ([value, text]) =>
+        `<option value="${escapeAttr(value)}">${escapeHtml(text)}</option>`,
+    )
+    .join('');
+  return `
+    <label class="bdt-match-filter">
+      <span class="bdt-match-filter__label">${escapeHtml(label)}</span>
+      <select class="bdt-match-filter__select" data-bdt-match-filter="${escapeAttr(key)}">
+        ${opts}
+      </select>
+    </label>
+  `;
 }
 
 /**
@@ -172,12 +237,18 @@ function bindMatchSelection(wrap, options) {
   const isImportableRow = (box) =>
     box.closest('tr')?.getAttribute('data-importable') !== '0';
 
+  const isVisibleRow = (box) => {
+    const row = box.closest('tr');
+    return Boolean(row) && !row.hidden;
+  };
+
   const importExistingEnabled = () => Boolean(existingToggle?.checked);
 
   selectAll?.addEventListener('change', () => {
     const checked = Boolean(selectAll.checked);
     const allowExisting = importExistingEnabled();
     for (const box of rowChecks()) {
+      if (!isVisibleRow(box)) continue;
       if (!isImportableRow(box) || box.disabled) {
         box.checked = false;
         continue;
@@ -188,6 +259,7 @@ function bindMatchSelection(wrap, options) {
       }
       box.checked = checked;
     }
+    applyMatchFilters(wrap);
     syncMatchSelectionUi(wrap, options.onSelectionChange);
   });
 
@@ -198,15 +270,67 @@ function bindMatchSelection(wrap, options) {
       if (!isExistingRow(box)) continue;
       box.checked = enabled;
     }
+    applyMatchFilters(wrap);
     syncMatchSelectionUi(wrap, options.onSelectionChange);
   });
 
   wrap.addEventListener('change', (e) => {
     const target = e.target;
+    if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    if (target.matches('[data-bdt-match-filter]')) {
+      applyMatchFilters(wrap);
+      syncMatchSelectionUi(wrap, options.onSelectionChange);
+      return;
+    }
     if (!(target instanceof HTMLInputElement)) return;
     if (!target.matches('[data-bdt-match-select]')) return;
+    applyMatchFilters(wrap);
     syncMatchSelectionUi(wrap, options.onSelectionChange);
   });
+}
+
+/**
+ * @param {HTMLElement} wrap
+ */
+function applyMatchFilters(wrap) {
+  const existing = filterValue(wrap, 'existing');
+  const status = filterValue(wrap, 'status');
+  const source = filterValue(wrap, 'source');
+  const selected = filterValue(wrap, 'selected');
+
+  for (const row of wrap.querySelectorAll('tbody tr')) {
+    const el = /** @type {HTMLTableRowElement} */ (row);
+    const box = /** @type {HTMLInputElement | null} */ (
+      el.querySelector('[data-bdt-match-select]')
+    );
+    const matchExisting =
+      existing === 'all' ||
+      (existing === 'yes' && el.getAttribute('data-existing') === '1') ||
+      (existing === 'no' && el.getAttribute('data-existing') !== '1');
+    const matchStatus =
+      status === 'all' || el.getAttribute('data-status') === status;
+    const matchSource =
+      source === 'all' || el.getAttribute('data-source') === source;
+    const isChecked = Boolean(box?.checked);
+    const matchSelected =
+      selected === 'all' ||
+      (selected === 'on' && isChecked) ||
+      (selected === 'off' && !isChecked);
+    el.hidden = !(matchExisting && matchStatus && matchSource && matchSelected);
+  }
+}
+
+/**
+ * @param {HTMLElement} wrap
+ * @param {string} key
+ */
+function filterValue(wrap, key) {
+  const el = /** @type {HTMLSelectElement | null} */ (
+    wrap.querySelector(`[data-bdt-match-filter="${key}"]`)
+  );
+  return el?.value || 'all';
 }
 
 /**
@@ -221,31 +345,41 @@ function syncMatchSelectionUi(wrap, onSelectionChange) {
     wrap.querySelector('[data-bdt-import-existing]')
   );
   const allowExisting = Boolean(existingToggle?.checked);
-  const selectable = boxes.filter((box) => {
-    if (box.disabled) return false;
+  const visibleSelectable = boxes.filter((box) => {
     const row = box.closest('tr');
-    if (row?.getAttribute('data-importable') === '0') return false;
-    const existing = row?.getAttribute('data-existing') === '1';
+    if (!row || row.hidden) return false;
+    if (box.disabled) return false;
+    if (row.getAttribute('data-importable') === '0') return false;
+    const existing = row.getAttribute('data-existing') === '1';
     return allowExisting || !existing;
   });
   const selected = boxes.filter((box) => box.checked && !box.disabled).length;
   const total = boxes.length;
-  const selectableChecked = selectable.filter((box) => box.checked).length;
+  const shown = boxes.filter((box) => {
+    const row = box.closest('tr');
+    return Boolean(row) && !row.hidden;
+  }).length;
+  const selectableChecked = visibleSelectable.filter((box) => box.checked).length;
 
   const selectAll = /** @type {HTMLInputElement | null} */ (
     wrap.querySelector('[data-bdt-match-select-all]')
   );
   if (selectAll) {
     const allSelectableOn =
-      selectable.length > 0 && selectableChecked === selectable.length;
+      visibleSelectable.length > 0 &&
+      selectableChecked === visibleSelectable.length;
     selectAll.checked = allSelectableOn;
     selectAll.indeterminate =
-      selectableChecked > 0 && selectableChecked < selectable.length;
+      selectableChecked > 0 && selectableChecked < visibleSelectable.length;
   }
 
   const label = wrap.querySelector('[data-bdt-match-selected]');
   if (label) {
-    label.textContent = fmt(t.importMatchSelected, { selected, total });
+    let text = fmt(t.importMatchSelected, { selected, total });
+    if (shown !== total) {
+      text += ` · ${fmt(t.importMatchShown, { shown, total })}`;
+    }
+    label.textContent = text;
   }
 
   onSelectionChange?.(selected);

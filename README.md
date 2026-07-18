@@ -3,7 +3,7 @@
 [![CI](https://github.com/NemoKing1210/backloggd-data-transfer/actions/workflows/ci.yml/badge.svg)](https://github.com/NemoKing1210/backloggd-data-transfer/actions/workflows/ci.yml)
 [![Install userscript](https://img.shields.io/badge/Install-userscript-3db89a?style=for-the-badge)](https://raw.githubusercontent.com/NemoKing1210/backloggd-data-transfer/main/backloggd-data-transfer.user.js)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.3-green?style=for-the-badge)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.6-green?style=for-the-badge)](CHANGELOG.md)
 
 Userscript that **imports game logs into [Backloggd](https://www.backloggd.com)** from other platforms via a **unified transfer JSON** file. Backloggd has no native import/export.
 

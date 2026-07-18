@@ -16,9 +16,10 @@ import { t } from '../state.js';
 /**
  * @param {import('../destinations/backloggd/match.js').EntryMatchResult[]} results
  * @param {string | null} [libraryError]
+ * @param {import('../format/dedupe.js').DuplicateTitleGroup[]} [duplicateGroups]
  * @returns {IssueItem[]}
  */
-export function collectReadIssues(results, libraryError = null) {
+export function collectReadIssues(results, libraryError = null, duplicateGroups = []) {
   /** @type {IssueItem[]} */
   const issues = [];
 
@@ -27,6 +28,24 @@ export function collectReadIssues(results, libraryError = null) {
       kind: 'library',
       text: fmt(t.importLibraryFailed, { error: libraryError }),
       detail: libraryError,
+    });
+  }
+
+  for (const dup of duplicateGroups || []) {
+    const dropped = (dup.droppedSourceIndices || [])
+      .map((i) => `#${i + 1}`)
+      .join(', ');
+    issues.push({
+      kind: 'duplicate',
+      index: dup.keptSourceIndex,
+      title: dup.title,
+      detail: dropped,
+      text: fmt(t.importReadIssueDuplicate, {
+        title: dup.title,
+        count: dup.count,
+        kept: dup.keptSourceIndex + 1,
+        dropped: dropped || '—',
+      }),
     });
   }
 

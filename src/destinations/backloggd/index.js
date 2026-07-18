@@ -2,6 +2,7 @@ import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { createBackloggdLog } from './create-log.js';
+import { libraryHasGame, probeUserHasLog } from './library.js';
 
 /**
  * Import a transfer document into Backloggd (sequential, rate-limited).
@@ -10,6 +11,8 @@ import { createBackloggdLog } from './create-log.js';
  * @param {{
  *   dryRun?: boolean,
  *   delayMs?: number,
+ *   importExisting?: boolean,
+ *   library?: import('./library.js').UserLibraryIndex | null,
  *   onProgress?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry, result: object }) => void,
  *   onItemStart?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry }) => void,
  *   shouldCancel?: () => boolean,
@@ -19,6 +22,8 @@ export async function importTransferToBackloggd(doc, options = {}) {
   const entries = doc?.entries || [];
   const total = entries.length;
   const dryRun = options.dryRun === true;
+  const importExisting = options.importExisting === true;
+  const library = options.library || null;
   const delayMs = Number.isFinite(options.delayMs)
     ? Math.max(0, options.delayMs)
     : 800;
@@ -78,6 +83,35 @@ export async function importTransferToBackloggd(doc, options = {}) {
       options.onProgress?.({ index, total, entry, result });
       if (delayMs) await sleepJitter(delayMs);
       continue;
+    }
+
+    // Safety: skip games already in library when import-existing is off.
+    // Re-check live when the scrape said "new" — it can miss shelves/pages.
+    if (!importExisting && !dryRun) {
+      let already = libraryHasGame(entry.game_id, entry.slug, library);
+      if (!already) {
+        try {
+          const probe = await probeUserHasLog({
+            gameId: entry.game_id,
+            slug: entry.slug,
+            userId,
+          });
+          already = probe.exists;
+        } catch (_) {
+          /* if probe fails, continue to create — better than hard-stop */
+        }
+      }
+      if (already) {
+        const result = {
+          ok: false,
+          skipped: true,
+          error: 'already in library',
+        };
+        results.push(result);
+        options.onProgress?.({ index, total, entry, result });
+        if (delayMs) await sleepJitter(delayMs);
+        continue;
+      }
     }
 
     const resolved = {

@@ -8,6 +8,7 @@ import { entryDisplayTitle, primaryPlaythrough } from './schema.js';
  * @property {string} label
  * @property {string} exportedAt
  * @property {number} total
+ * @property {number} originalTotal
  * @property {number} uniqueTitles
  * @property {number} duplicates
  * @property {number} withRating
@@ -23,7 +24,7 @@ import { entryDisplayTitle, primaryPlaythrough } from './schema.js';
 
 /**
  * @param {import('./schema.js').TransferDocument} doc
- * @param {{ foundCount?: number, notFoundCount?: number, existingCount?: number }} [matchStats]
+ * @param {{ foundCount?: number, notFoundCount?: number, existingCount?: number, originalTotal?: number, duplicatesRemoved?: number }} [matchStats]
  * @returns {TransferAnalysis}
  */
 export function analyzeTransferDocument(doc, matchStats = {}) {
@@ -60,6 +61,12 @@ export function analyzeTransferDocument(doc, matchStats = {}) {
 
   const total = entries.length;
   const uniqueTitles = titles.size;
+  const originalTotal =
+    matchStats.originalTotal != null ? Number(matchStats.originalTotal) : total;
+  const duplicates =
+    matchStats.duplicatesRemoved != null
+      ? Number(matchStats.duplicatesRemoved)
+      : Math.max(0, originalTotal - uniqueTitles);
   const foundCount =
     matchStats.foundCount != null ? matchStats.foundCount : withGameId;
   const notFoundCount =
@@ -75,8 +82,9 @@ export function analyzeTransferDocument(doc, matchStats = {}) {
     label: String(doc.source?.label || ''),
     exportedAt: String(doc.exportedAt || ''),
     total,
+    originalTotal,
     uniqueTitles,
-    duplicates: Math.max(0, total - uniqueTitles),
+    duplicates,
     withRating,
     favorites,
     withDates,

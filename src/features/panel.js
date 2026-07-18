@@ -518,16 +518,20 @@ async function runImport(root, importDoc) {
     const summary = await importTransferToBackloggd(importDoc, {
       dryRun: false,
       delayMs: settings.importDelayMs,
+      concurrency: settings.matchConcurrency,
       importExisting: settings.importExisting === true,
       library: lastLibrary,
-      onItemStart({ index, total: tot, entry }) {
+      onItemStart({ index, total: tot, done, entry, activeTitles, concurrency }) {
         setImportLogCurrent(root, {
           index,
           total: tot,
+          done,
           title: entryDisplayTitle(entry),
+          activeTitles,
+          concurrency,
         });
       },
-      onProgress({ index, total: tot, entry, result }) {
+      onProgress({ index, total: tot, done, entry, result, activeTitles, concurrency }) {
         const title = entryDisplayTitle(entry);
 
         let kind = 'fail';
@@ -544,10 +548,13 @@ async function runImport(root, importDoc) {
         appendImportLogResult(root, {
           index,
           total: tot,
+          done,
           title,
           kind,
           detail: result.error || '',
           counts: { ...counts },
+          activeTitles,
+          concurrency,
         });
       },
     });

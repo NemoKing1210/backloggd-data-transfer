@@ -1,5 +1,5 @@
 import { fmt } from '../i18n/index.js';
-import { escapeHtml } from '../utils/html.js';
+import { escapeAttr, escapeHtml } from '../utils/html.js';
 import { t } from '../state.js';
 
 /**
@@ -69,6 +69,7 @@ export function beginImportLog(root, options) {
       <p class="bdt-import-log__hint" data-bdt-import-now-hint>${escapeHtml(
         fmt(t.importLogNowHint, { count: total }),
       )}</p>
+      <div class="bdt-import-log__active" data-bdt-import-active hidden></div>
     </div>
 
     <div class="bdt-import-log__progress">
@@ -94,9 +95,16 @@ export function beginImportLog(root, options) {
 }
 
 /**
- * Update the “current game” header before a request starts.
+ * Update the “current game(s)” header while requests are in flight.
  * @param {HTMLElement} root
- * @param {{ index: number, total: number, title: string }} info
+ * @param {{
+ *   index?: number,
+ *   total: number,
+ *   done?: number,
+ *   title?: string,
+ *   activeTitles?: string[],
+ *   concurrency?: number,
+ * }} info
  */
 export function setImportLogCurrent(root, info) {
   const el = root.querySelector('[data-bdt-log]');
@@ -105,18 +113,61 @@ export function setImportLogCurrent(root, info) {
   const titleEl = el.querySelector('[data-bdt-import-now-title]');
   const hintEl = el.querySelector('[data-bdt-import-now-hint]');
   const counterEl = el.querySelector('[data-bdt-import-counter]');
+  const activeEl = el.querySelector('[data-bdt-import-active]');
   const now = el.querySelector('[data-bdt-import-now]');
 
-  if (titleEl) titleEl.textContent = info.title || t.importLogWaiting;
+  const total = Math.max(1, Number(info.total) || 1);
+  const done = Math.max(0, Number(info.done) || 0);
+  const concurrency = Math.max(0, Number(info.concurrency) || 0);
+  const activeTitles = Array.isArray(info.activeTitles)
+    ? info.activeTitles.filter(Boolean)
+    : [];
+  const parallel = concurrency > 1 || activeTitles.length > 1;
+
+  if (titleEl) {
+    if (parallel && activeTitles.length) {
+      titleEl.textContent = fmt(t.importLogWritingParallel, {
+        current: done,
+        total,
+        active: Math.min(concurrency || activeTitles.length, activeTitles.length),
+      });
+    } else {
+      titleEl.textContent =
+        info.title || activeTitles[0] || t.importLogWaiting;
+    }
+  }
+
   if (hintEl) {
-    hintEl.textContent = fmt(t.importLogWriting, {
-      index: info.index + 1,
-      total: info.total,
-    });
+    hintEl.textContent = parallel
+      ? fmt(t.importLogWritingHintParallel, {
+          left: Math.max(0, total - done),
+        })
+      : fmt(t.importLogWriting, {
+          index: Math.min(total, (info.index ?? done) + 1),
+          total,
+        });
   }
+
   if (counterEl) {
-    counterEl.textContent = `${info.index + 1} / ${info.total}`;
+    counterEl.textContent = `${done} / ${total}`;
   }
+
+  if (activeEl) {
+    if (activeTitles.length) {
+      activeEl.hidden = false;
+      activeEl.innerHTML = activeTitles
+        .slice(0, 8)
+        .map(
+          (title) =>
+            `<span class="bdt-import-log__chip" title="${escapeAttr(title)}">${escapeHtml(title)}</span>`,
+        )
+        .join('');
+    } else {
+      activeEl.hidden = true;
+      activeEl.innerHTML = '';
+    }
+  }
+
   now?.classList.add('is-active');
   now?.classList.remove('is-done', 'is-fail', 'is-warn');
 }
@@ -127,10 +178,13 @@ export function setImportLogCurrent(root, info) {
  * @param {{
  *   index: number,
  *   total: number,
+ *   done?: number,
  *   title: string,
  *   kind: ImportLogKind,
  *   detail?: string,
  *   counts: ImportLogCounts,
+ *   activeTitles?: string[],
+ *   concurrency?: number,
  * }} info
  */
 export function appendImportLogResult(root, info) {
@@ -152,6 +206,16 @@ export function appendImportLogResult(root, info) {
 
   syncImportLogCounts(el, info.counts);
   setImportLogProgress(el, info.counts);
+
+  // Keep the “now” header in sync with remaining in-flight work.
+  setImportLogCurrent(root, {
+    index: info.index,
+    total: info.total,
+    done: info.done ?? info.counts.ok + info.counts.fail + info.counts.skip,
+    title: info.title,
+    activeTitles: info.activeTitles,
+    concurrency: info.concurrency,
+  });
 }
 
 /**
@@ -165,6 +229,7 @@ export function finishImportLog(root, counts) {
 
   const titleEl = el.querySelector('[data-bdt-import-now-title]');
   const hintEl = el.querySelector('[data-bdt-import-now-hint]');
+  const activeEl = el.querySelector('[data-bdt-import-active]');
   const now = el.querySelector('[data-bdt-import-now]');
   const done = (counts.ok || 0) + (counts.fail || 0) + (counts.skip || 0);
 
@@ -183,6 +248,11 @@ export function finishImportLog(root, counts) {
             time: formatImportDuration(counts.elapsedMs),
           })}`
         : summary;
+  }
+
+  if (activeEl) {
+    activeEl.hidden = true;
+    activeEl.innerHTML = '';
   }
 
   const counterEl = el.querySelector('[data-bdt-import-counter]');

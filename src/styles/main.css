@@ -2011,6 +2011,32 @@ a.bdt-btn--ghost:hover {
   color: var(--bdt-muted);
 }
 
+.bdt-import-log__active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.15rem;
+}
+
+.bdt-import-log__active[hidden] {
+  display: none;
+}
+
+.bdt-import-log__chip {
+  max-width: 12rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(61, 184, 154, 0.3);
+  background: rgba(61, 184, 154, 0.14);
+  color: var(--bdt-text);
+  font-size: 0.72rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: bdt-chip-in 0.28s ease-out;
+}
+
 .bdt-import-log__progress {
   display: grid;
   grid-template-columns: 1fr auto;

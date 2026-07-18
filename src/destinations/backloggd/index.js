@@ -1,5 +1,7 @@
+import { MATCH_CONCURRENCY, MATCH_CONCURRENCY_MAX } from '../../constants.js';
 import { entryDisplayTitle } from '../../format/schema.js';
 import { sleepJitter } from '../../utils/delay.js';
+import { mapPool } from '../../utils/pool.js';
 import { getCsrfToken, resolveBackloggdUserId } from './auth.js';
 import { createBackloggdLog } from './create-log.js';
 import {
@@ -10,16 +12,32 @@ import {
 import { getCurrentUsername } from './user.js';
 
 /**
- * Import a transfer document into Backloggd (sequential, rate-limited).
+ * Import a transfer document into Backloggd (parallel, rate-limited per worker).
  *
  * @param {import('../../format/schema.js').TransferDocument} doc
  * @param {{
  *   dryRun?: boolean,
  *   delayMs?: number,
+ *   concurrency?: number,
  *   importExisting?: boolean,
  *   library?: import('./library.js').UserLibraryIndex | null,
- *   onProgress?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry, result: object }) => void,
- *   onItemStart?: (info: { index: number, total: number, entry: import('../../format/schema.js').TransferEntry }) => void,
+ *   onProgress?: (info: {
+ *     index: number,
+ *     total: number,
+ *     done: number,
+ *     entry: import('../../format/schema.js').TransferEntry,
+ *     result: object,
+ *     activeTitles: string[],
+ *     concurrency: number,
+ *   }) => void,
+ *   onItemStart?: (info: {
+ *     index: number,
+ *     total: number,
+ *     done: number,
+ *     entry: import('../../format/schema.js').TransferEntry,
+ *     activeTitles: string[],
+ *     concurrency: number,
+ *   }) => void,
  *   shouldCancel?: () => boolean,
  * }} [options]
  */
@@ -32,7 +50,23 @@ export async function importTransferToBackloggd(doc, options = {}) {
   const delayMs = Number.isFinite(options.delayMs)
     ? Math.max(0, options.delayMs)
     : 800;
-  const results = [];
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      MATCH_CONCURRENCY_MAX,
+      Math.floor(
+        Number.isFinite(options.concurrency)
+          ? Number(options.concurrency)
+          : MATCH_CONCURRENCY,
+      ),
+    ),
+  );
+
+  /** @type {(object | undefined)[]} */
+  const results = new Array(total);
+  let done = 0;
+  /** @type {Map<number, string>} */
+  const activeByIndex = new Map();
 
   /** @type {number | undefined} */
   let userId;
@@ -71,105 +105,175 @@ export async function importTransferToBackloggd(doc, options = {}) {
     }
   }
 
-  for (let index = 0; index < total; index += 1) {
-    if (options.shouldCancel?.()) {
-      break;
-    }
-    const entry = entries[index];
-    options.onItemStart?.({ index, total, entry });
+  await mapPool(
+    total,
+    concurrency,
+    async (index) => {
+      if (options.shouldCancel?.()) return;
 
-    if (entry.game_id == null) {
-      const result = {
-        ok: false,
-        skipped: true,
-        error: 'no match from read step',
-      };
-      results.push(result);
-      options.onProgress?.({ index, total, entry, result });
-      if (delayMs) await sleepJitter(delayMs);
-      continue;
-    }
+      const entry = entries[index];
+      const title = entryDisplayTitle(entry) || `#${index + 1}`;
+      activeByIndex.set(index, title);
+      options.onItemStart?.({
+        index,
+        total,
+        done,
+        entry,
+        activeTitles: [...activeByIndex.values()],
+        concurrency,
+      });
 
-    // Safety: skip games already in library when import-existing is off.
-    // Re-check live when the scrape said "new" — it can miss shelves/pages.
-    if (!importExisting && !dryRun) {
-      let already = libraryHasGame(entry.game_id, entry.slug, library);
-      if (!already) {
-        try {
-          const probe = await probeUserHasLog({
+      /** @type {object} */
+      let result;
+
+      try {
+        result = await importOneEntry(entry, {
+          dryRun,
+          importExisting,
+          library,
+          userId,
+          csrfToken,
+          delayMs,
+        });
+        if (result.ok) {
+          rememberLibraryGame(library, {
             gameId: entry.game_id,
             slug: entry.slug,
-            username: getCurrentUsername(),
           });
-          already = probe.exists;
-          if (already) {
-            rememberLibraryGame(library, {
-              gameId: entry.game_id,
-              slug: entry.slug,
-            });
-          }
-        } catch (_) {
-          /* if probe fails, continue to create — better than hard-stop */
         }
-      }
-      if (already) {
-        const result = {
+      } catch (err) {
+        result = {
           ok: false,
-          skipped: true,
-          error: 'already in library',
+          error: err instanceof Error ? err.message : String(err),
         };
-        results.push(result);
-        options.onProgress?.({ index, total, entry, result });
-        if (delayMs) await sleepJitter(delayMs);
-        continue;
+      } finally {
+        activeByIndex.delete(index);
       }
-    }
 
-    const resolved = {
-      slug: entry.slug || '',
-      title: entryDisplayTitle(entry),
-      url: '',
-      game_id: entry.game_id,
+      results[index] = result;
+      done += 1;
+      options.onProgress?.({
+        index,
+        total,
+        done,
+        entry,
+        result,
+        activeTitles: [...activeByIndex.values()],
+        concurrency,
+      });
+
+      if (delayMs && !options.shouldCancel?.()) {
+        await sleepJitter(delayMs, {
+          minFactor: 0.75,
+          maxFactor: 1.5,
+          pauseChance: 0.08,
+          pauseMinMs: Math.min(200, delayMs),
+          pauseMaxMs: Math.max(delayMs, 400),
+        });
+      }
+    },
+    { shouldCancel: options.shouldCancel },
+  );
+
+  const settled = results.filter((r) => r != null);
+  const okCount = settled.filter((r) => r.ok).length;
+  const skipCount = settled.filter((r) => !r.ok && r.skipped).length;
+  const failCount = settled.filter((r) => !r.ok && !r.skipped).length;
+  return {
+    // Keep index alignment with `doc.entries` (cancelled slots → skipped).
+    results: results.map(
+      (r) => r ?? { ok: false, skipped: true, error: 'cancelled' },
+    ),
+    okCount,
+    failCount,
+    skipCount:
+      skipCount + Math.max(0, total - settled.length),
+    total,
+    dryRun,
+  };
+}
+
+/**
+ * @param {import('../../format/schema.js').TransferEntry} entry
+ * @param {{
+ *   dryRun: boolean,
+ *   importExisting: boolean,
+ *   library: import('./library.js').UserLibraryIndex | null,
+ *   userId?: number,
+ *   csrfToken?: string,
+ *   delayMs?: number,
+ * }} ctx
+ */
+async function importOneEntry(entry, ctx) {
+  if (entry.game_id == null) {
+    return {
+      ok: false,
+      skipped: true,
+      error: 'no match from read step',
     };
-
-    let result = await createBackloggdLog(entry, {
-      dryRun,
-      resolved,
-      userId,
-      csrfToken,
-    });
-
-    // Brief pause + one retry on rate limit.
-    if (!result.ok && result.status === 429) {
-      await sleepJitter(Math.max(delayMs * 3, 3500), {
-        minFactor: 0.9,
-        maxFactor: 1.4,
-        pauseChance: 0.25,
-        pauseMinMs: 800,
-        pauseMaxMs: 2500,
-      });
-      result = await createBackloggdLog(entry, {
-        dryRun,
-        resolved,
-        userId,
-        csrfToken: getCsrfToken() || csrfToken,
-      });
-    }
-
-    if (result.ok) {
-      rememberLibraryGame(library, {
-        gameId: entry.game_id,
-        slug: entry.slug,
-      });
-    }
-
-    results.push(result);
-    options.onProgress?.({ index, total, entry, result });
-    if (delayMs && index < total - 1) await sleepJitter(delayMs);
   }
 
-  const okCount = results.filter((r) => r.ok).length;
-  const skipCount = results.filter((r) => !r.ok && r.skipped).length;
-  const failCount = results.filter((r) => !r.ok && !r.skipped).length;
-  return { results, okCount, failCount, skipCount, total, dryRun };
+  // Safety: skip games already in library when import-existing is off.
+  if (!ctx.importExisting && !ctx.dryRun) {
+    let already = libraryHasGame(entry.game_id, entry.slug, ctx.library);
+    if (!already) {
+      try {
+        const probe = await probeUserHasLog({
+          gameId: entry.game_id,
+          slug: entry.slug,
+          username: getCurrentUsername(),
+        });
+        already = probe.exists;
+        if (already) {
+          rememberLibraryGame(ctx.library, {
+            gameId: entry.game_id,
+            slug: entry.slug,
+          });
+        }
+      } catch (_) {
+        /* if probe fails, continue to create — better than hard-stop */
+      }
+    }
+    if (already) {
+      return {
+        ok: false,
+        skipped: true,
+        error: 'already in library',
+      };
+    }
+  }
+
+  const resolved = {
+    slug: entry.slug || '',
+    title: entryDisplayTitle(entry),
+    url: '',
+    game_id: entry.game_id,
+  };
+
+  let result = await createBackloggdLog(entry, {
+    dryRun: ctx.dryRun,
+    resolved,
+    userId: ctx.userId,
+    csrfToken: ctx.csrfToken,
+  });
+
+  // Brief pause + one retry on rate limit.
+  if (!result.ok && result.status === 429) {
+    const delayMs = Number(ctx.delayMs) || 800;
+    await sleepJitter(Math.max(delayMs * 3, 3500), {
+      minFactor: 0.9,
+      maxFactor: 1.4,
+      pauseChance: 0.25,
+      pauseMinMs: 800,
+      pauseMaxMs: 2500,
+    });
+    result = await createBackloggdLog(entry, {
+      dryRun: ctx.dryRun,
+      resolved,
+      userId: ctx.userId,
+      csrfToken: getCsrfToken() || ctx.csrfToken,
+    });
+  }
+
+  return result;
 }

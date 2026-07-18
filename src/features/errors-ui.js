@@ -5,8 +5,8 @@ import { showToast } from './toast.js';
 import { t } from '../state.js';
 
 /**
- * @typedef {object} ReadIssue
- * @property {'library' | 'not_found' | 'error'} kind
+ * @typedef {object} IssueItem
+ * @property {string} kind
  * @property {string} text
  * @property {number} [index]
  * @property {string} [title]
@@ -16,10 +16,10 @@ import { t } from '../state.js';
 /**
  * @param {import('../destinations/backloggd/match.js').EntryMatchResult[]} results
  * @param {string | null} [libraryError]
- * @returns {ReadIssue[]}
+ * @returns {IssueItem[]}
  */
 export function collectReadIssues(results, libraryError = null) {
-  /** @type {ReadIssue[]} */
+  /** @type {IssueItem[]} */
   const issues = [];
 
   if (libraryError) {
@@ -64,11 +64,66 @@ export function collectReadIssues(results, libraryError = null) {
 }
 
 /**
+ * @param {object[]} results
+ * @param {import('../format/schema.js').TransferEntry[]} entries
+ * @returns {IssueItem[]}
+ */
+export function collectImportIssues(results, entries) {
+  /** @type {IssueItem[]} */
+  const issues = [];
+
+  (results || []).forEach((result, index) => {
+    if (result?.ok) return;
+    const entry = entries[index];
+    const title = entryDisplayTitle(entry) || `#${index + 1}`;
+    const detail = result?.error || 'fail';
+    issues.push({
+      kind: 'error',
+      index,
+      title,
+      detail,
+      text: fmt(t.importIssueError, {
+        index: index + 1,
+        title,
+        error: detail,
+      }),
+    });
+  });
+
+  return issues;
+}
+
+/**
  * @param {HTMLElement} root
- * @param {ReadIssue[]} issues
+ * @param {IssueItem[]} issues
  */
 export function renderReadErrors(root, issues) {
-  const el = root.querySelector('[data-bdt-errors]');
+  renderErrorBlock(root, issues, {
+    selector: '[data-bdt-errors]',
+    title: t.importReadErrorsTitle,
+  });
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {IssueItem[]} issues
+ */
+export function renderImportErrors(root, issues) {
+  renderErrorBlock(root, issues, {
+    selector: '[data-bdt-import-errors]',
+    title: t.importErrorsTitle,
+    open: issues.length > 0,
+  });
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {IssueItem[]} issues
+ * @param {{ selector?: string, title?: string, open?: boolean }} [options]
+ */
+export function renderErrorBlock(root, issues, options = {}) {
+  const selector = options.selector || '[data-bdt-errors]';
+  const el = root.querySelector(selector);
   if (!el) return;
 
   if (!issues.length) {
@@ -77,6 +132,8 @@ export function renderReadErrors(root, issues) {
     return;
   }
 
+  const title = options.title || t.importReadErrorsTitle;
+  const openAttr = options.open ? ' open' : '';
   const lines = issues.map((issue) => issue.text);
   const list = issues
     .map(
@@ -87,10 +144,10 @@ export function renderReadErrors(root, issues) {
 
   el.hidden = false;
   el.innerHTML = `
-    <details class="bdt-errors__details">
+    <details class="bdt-errors__details"${openAttr}>
       <summary class="bdt-errors__summary">
         <span class="bdt-errors__summary-main">
-          <span class="bdt-errors__title">${escapeHtml(t.importReadErrorsTitle)}</span>
+          <span class="bdt-errors__title">${escapeHtml(title)}</span>
           <span class="bdt-errors__count">${issues.length}</span>
         </span>
         <span class="bdt-errors__chevron" aria-hidden="true"></span>
@@ -110,9 +167,8 @@ export function renderReadErrors(root, issues) {
   copyBtn?.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const payload = lines.join('\n');
     try {
-      await copyText(payload);
+      await copyText(lines.join('\n'));
       showToast(t.importReadErrorsCopied, {
         type: 'success',
         title: t.toastCopiedTitle,
@@ -130,7 +186,22 @@ export function renderReadErrors(root, issues) {
  * @param {HTMLElement} root
  */
 export function clearReadErrors(root) {
-  const el = root.querySelector('[data-bdt-errors]');
+  clearErrorBlock(root, '[data-bdt-errors]');
+}
+
+/**
+ * @param {HTMLElement} root
+ */
+export function clearImportErrors(root) {
+  clearErrorBlock(root, '[data-bdt-import-errors]');
+}
+
+/**
+ * @param {HTMLElement} root
+ * @param {string} selector
+ */
+function clearErrorBlock(root, selector) {
+  const el = root.querySelector(selector);
   if (!el) return;
   el.hidden = true;
   el.innerHTML = '';

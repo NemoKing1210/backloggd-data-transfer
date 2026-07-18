@@ -1,8 +1,29 @@
 import { getCurrentUsername } from './user.js';
-import { backloggdUrl } from './site.js';
 
 /** @type {number | null} */
 let cachedUserId = null;
+
+/**
+ * Whether the current page session looks logged in.
+ * @returns {boolean}
+ */
+export function isLoggedIn() {
+  if (getCurrentUsername()) return true;
+
+  if (
+    document.querySelector(
+      '#profile-li, #add-a-game, #mobile-user-nav, a[href*="sign_out"], a[data-method="delete"][href*="sign_out"]',
+    )
+  ) {
+    return true;
+  }
+
+  const hasSignIn = Boolean(
+    document.querySelector('a[href*="/users/sign_in"], a[href*="sign_in"]'),
+  );
+  const hasCsrf = Boolean(getCsrfToken());
+  return hasCsrf && !hasSignIn;
+}
 
 /**
  * CSRF token from the logged-in Backloggd page (Rails).
@@ -23,82 +44,115 @@ export function getCsrfToken() {
 }
 
 /**
- * Resolve numeric Backloggd user id (needed for log POST URL).
- * Cached for the page session.
- * @returns {Promise<number>}
- */
-export async function resolveBackloggdUserId() {
-  if (cachedUserId != null) return cachedUserId;
-
-  const fromDom = extractUserIdFromHtml(document.documentElement?.outerHTML || '');
-  if (fromDom != null) {
-    cachedUserId = fromDom;
-    return fromDom;
-  }
-
-  const username = getCurrentUsername();
-  const paths = [];
-  if (username) {
-    paths.push(`/u/${encodeURIComponent(username)}/`);
-    paths.push(`/u/${encodeURIComponent(username)}/games/`);
-  }
-  paths.push('/settings/');
-
-  for (const path of paths) {
-    try {
-      const html = await fetchHtml(backloggdUrl(path));
-      const id = extractUserIdFromHtml(html);
-      if (id != null) {
-        cachedUserId = id;
-        return id;
-      }
-    } catch (_) {
-      /* try next */
-    }
-  }
-
-  throw new Error('Could not resolve Backloggd user id (are you logged in?)');
-}
-
-/**
- * @param {string} html
+ * Find numeric Backloggd user id without throwing.
+ * Prefers page elements with a `user_id` attribute, then session cache.
  * @returns {number | null}
  */
-export function extractUserIdFromHtml(html) {
-  if (!html) return null;
+export function findBackloggdUserId() {
+  if (cachedUserId != null) return cachedUserId;
 
-  const patterns = [
-    /\/api\/user\/(\d+)(?:\/|$)/,
-    /["']user_id["']\s*[:=]\s*["']?(\d+)/i,
-    /["']userId["']\s*[:=]\s*["']?(\d+)/i,
-    /data-user-id=["'](\d+)["']/i,
-    /data-userid=["'](\d+)["']/i,
-    /name=["']user_id["'][^>]*value=["'](\d+)["']/i,
-    /value=["'](\d+)["'][^>]*name=["']user_id["']/i,
-    /\/users\/(\d+)(?:\/|"|'|\s|$)/,
-  ];
+  const username = getCurrentUsername();
 
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) {
-      const id = Number(match[1]);
-      if (Number.isFinite(id) && id > 0) return id;
-    }
+  const fromAttr = readUserIdFromUserIdAttr();
+  if (fromAttr != null) {
+    return rememberUserId(fromAttr, username);
+  }
+
+  const stored = readStoredUserId(username);
+  if (stored != null) {
+    cachedUserId = stored;
+    return stored;
   }
 
   return null;
 }
 
 /**
- * @param {string} url
- * @returns {Promise<string>}
+ * Resolve numeric Backloggd user id (needed for log POST URL).
+ * @returns {Promise<number>}
  */
-async function fetchHtml(url) {
-  const res = await fetch(url, {
-    method: 'GET',
-    credentials: 'same-origin',
-    headers: { Accept: 'text/html' },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.text();
+export async function resolveBackloggdUserId() {
+  const id = findBackloggdUserId();
+  if (id != null) return id;
+
+  throw new Error(
+    isLoggedIn()
+      ? 'Could not find user_id on the page. Enter your Backloggd user id manually.'
+      : 'Could not resolve Backloggd user id (are you logged in?)',
+  );
+}
+
+/**
+ * Persist a manually entered (or detected) user id for this session.
+ * @param {number | string} raw
+ * @returns {number}
+ */
+export function setBackloggdUserId(raw) {
+  const id = Number(raw);
+  if (!Number.isFinite(id) || id <= 0 || !Number.isInteger(id)) {
+    throw new Error('Invalid Backloggd user id');
+  }
+  return rememberUserId(id, getCurrentUsername());
+}
+
+/**
+ * Read numeric id from elements that expose a `user_id` attribute.
+ * @returns {number | null}
+ */
+function readUserIdFromUserIdAttr() {
+  const nodes = document.querySelectorAll('[user_id]');
+  for (const el of nodes) {
+    const id = parsePositiveInt(el.getAttribute('user_id'));
+    if (id != null) return id;
+  }
+  return null;
+}
+
+/**
+ * @param {string | null | undefined} raw
+ * @returns {number | null}
+ */
+function parsePositiveInt(raw) {
+  if (raw == null || raw === '') return null;
+  const id = Number(String(raw).trim());
+  if (!Number.isFinite(id) || id <= 0 || !Number.isInteger(id)) return null;
+  return id;
+}
+
+/**
+ * @param {number} id
+ * @param {string} username
+ * @returns {number}
+ */
+function rememberUserId(id, username) {
+  cachedUserId = id;
+  writeStoredUserId(username, id);
+  return id;
+}
+
+/**
+ * @param {string} username
+ * @returns {number | null}
+ */
+function readStoredUserId(username) {
+  if (!username || typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(`bdt_uid:${username.toLowerCase()}`);
+    return parsePositiveInt(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * @param {string} username
+ * @param {number} id
+ */
+function writeStoredUserId(username, id) {
+  if (!username || typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(`bdt_uid:${username.toLowerCase()}`, String(id));
+  } catch (_) {
+    /* ignore quota / private mode */
+  }
 }

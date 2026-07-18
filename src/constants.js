@@ -3,6 +3,9 @@ import pkg from '../package.json' with { type: 'json' };
 export const REPO_URL = 'https://github.com/NemoKing1210/backloggd-data-transfer';
 export const SCRIPT_VERSION = pkg.version;
 export const SETTINGS_KEY = 'bdt_settings';
+export const HISTORY_KEY = 'bdt_history';
+/** Keep the latest N transfer sessions in GM storage. */
+export const HISTORY_MAX_ENTRIES = 50;
 export const ROOT_ATTR = 'data-bdt-root';
 export const SCAN_DEBOUNCE_MS = 400;
 /** Delay between Backloggd autocomplete lookups during Read/match. */

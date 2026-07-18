@@ -17,8 +17,16 @@ import {
   renderMatchTable,
   setMatchProgress,
 } from './match-ui.js';
-import { clearReadErrors, collectReadIssues, renderReadErrors } from './errors-ui.js';
+import { clearReadErrors, clearImportErrors, collectImportIssues, collectReadIssues, renderImportErrors, renderReadErrors } from './errors-ui.js';
+import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
 import { showToast } from './toast.js';
+import {
+  findBackloggdUserId,
+  getCsrfToken,
+  isLoggedIn,
+  setBackloggdUserId,
+} from '../destinations/backloggd/auth.js';
+import { recordImportHistory } from '../history/store.js';
 
 const PANEL_ID = 'bdt-panel-backdrop';
 export const NAV_BTN_ID = 'bdt-nav-transfer';
@@ -111,6 +119,9 @@ function resetAnalysisUi(root) {
     summary.innerHTML = '';
   }
   clearReadErrors(root);
+  clearImportErrors(root);
+  const authGate = root.querySelector('[data-bdt-import-auth]');
+  if (authGate) authGate.hidden = true;
   const matchTable = root.querySelector('[data-bdt-match-table]');
   if (matchTable) {
     matchTable.hidden = true;
@@ -212,6 +223,9 @@ function renderImportResult(root, summary, entries) {
   const statusEl = root.querySelector('[data-bdt-import-status]');
   if (!statusEl) return;
 
+  const authGate = root.querySelector('[data-bdt-import-auth]');
+  if (authGate) authGate.hidden = true;
+
   const allOk = summary.failCount === 0;
   const allFailed = summary.okCount === 0 && summary.failCount > 0;
   const orbClass = allOk
@@ -225,24 +239,7 @@ function renderImportResult(root, summary, entries) {
       ? t.importFailedTitle
       : t.importPartialTitle;
 
-  const failures = (summary.results || [])
-    .map((result, index) => ({
-      result,
-      entry: entries[index],
-      index,
-    }))
-    .filter((row) => !row.result?.ok);
-
-  const failureList = failures.length
-    ? `<ul class="bdt-import-errors">${failures
-        .map((row) => {
-          const name = entryDisplayTitle(row.entry) || `#${row.index + 1}`;
-          const error = row.result?.error || 'fail';
-          return `<li><strong>${escapeHtml(name)}</strong><span>${escapeHtml(error)}</span></li>`;
-        })
-        .join('')}</ul>`
-    : '';
-
+  statusEl.hidden = false;
   statusEl.innerHTML = `
     <div class="bdt-stage__orb ${orbClass}" aria-hidden="true"></div>
     <h3 class="bdt-stage__title">${escapeHtml(title)}</h3>
@@ -252,8 +249,249 @@ function renderImportResult(root, summary, entries) {
         fail: summary.failCount,
       }),
     )}</p>
-    ${failureList}
   `;
+
+  renderImportErrors(root, collectImportIssues(summary.results || [], entries));
+}
+
+/**
+ * Hide progress chrome and clear the import auth gate.
+ * @param {HTMLElement} root
+ */
+function prepareImportGate(root) {
+  importReady = true;
+  setImportStep(root, 'done');
+
+  const statusEl = root.querySelector('[data-bdt-import-status]');
+  const logEl = root.querySelector('[data-bdt-log]');
+
+  if (statusEl) {
+    statusEl.hidden = true;
+    statusEl.innerHTML = '';
+  }
+  if (logEl) {
+    logEl.hidden = true;
+    logEl.textContent = '';
+  }
+  clearImportErrors(root);
+}
+
+/**
+ * Show a blocking gate on the import stage (not logged in / CSRF missing).
+ * @param {HTMLElement} root
+ * @param {{ title: string, body: string, detail?: string }} msg
+ */
+function showImportAuthGate(root, msg) {
+  prepareImportGate(root);
+
+  const authGate = root.querySelector('[data-bdt-import-auth]');
+  if (authGate) {
+    authGate.hidden = false;
+    authGate.innerHTML = `
+      <div class="bdt-auth-gate__icon" aria-hidden="true">
+        <i class="fa-solid fa-user-lock"></i>
+      </div>
+      <h3 class="bdt-auth-gate__title">${escapeHtml(msg.title)}</h3>
+      <p class="bdt-auth-gate__text">${escapeHtml(msg.body)}</p>
+      ${
+        msg.detail
+          ? `<p class="bdt-auth-gate__detail">${escapeHtml(msg.detail)}</p>`
+          : ''
+      }
+      <a class="bdt-btn bdt-btn--primary" href="/users/sign_in">${escapeHtml(t.importSignIn)}</a>
+    `;
+  }
+
+  showToast(msg.body, { type: 'error', title: msg.title });
+}
+
+/**
+ * Ask the user to enter their Backloggd user id, then continue import.
+ * @param {HTMLElement} root
+ * @param {import('../format/schema.js').TransferDocument} importDoc
+ */
+function showImportUserIdGate(root, importDoc) {
+  prepareImportGate(root);
+
+  const authGate = root.querySelector('[data-bdt-import-auth]');
+  if (!authGate) return;
+
+  authGate.hidden = false;
+  authGate.innerHTML = `
+    <div class="bdt-auth-gate__icon" aria-hidden="true">
+      <i class="fa-solid fa-fingerprint"></i>
+    </div>
+    <h3 class="bdt-auth-gate__title">${escapeHtml(t.importNeedUserIdTitle)}</h3>
+    <p class="bdt-auth-gate__text">${escapeHtml(t.importNeedUserIdBody)}</p>
+    <label class="bdt-auth-gate__field">
+      <span class="bdt-auth-gate__label">${escapeHtml(t.importUserIdLabel)}</span>
+      <input
+        type="number"
+        inputmode="numeric"
+        min="1"
+        step="1"
+        class="bdt-auth-gate__input"
+        data-bdt-user-id-input
+        placeholder="${escapeAttr(t.importUserIdPlaceholder)}"
+        autocomplete="off"
+      />
+    </label>
+    <p class="bdt-auth-gate__hint">${escapeHtml(t.importUserIdHint)}</p>
+    <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-user-id-continue>
+      ${escapeHtml(t.importUserIdContinue)}
+    </button>
+  `;
+
+  const input = /** @type {HTMLInputElement | null} */ (
+    authGate.querySelector('[data-bdt-user-id-input]')
+  );
+  const continueBtn = authGate.querySelector('[data-bdt-user-id-continue]');
+
+  const submit = () => {
+    try {
+      setBackloggdUserId(input?.value ?? '');
+    } catch (_) {
+      showToast(t.importUserIdInvalid, {
+        type: 'warning',
+        title: t.importNeedUserIdTitle,
+      });
+      input?.focus();
+      return;
+    }
+    void runImport(root, importDoc);
+  };
+
+  continueBtn?.addEventListener('click', submit);
+  input?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submit();
+    }
+  });
+  input?.focus();
+
+  showToast(t.importNeedUserIdBody, {
+    type: 'warning',
+    title: t.importNeedUserIdTitle,
+  });
+}
+
+/**
+ * Run the live import after auth checks have passed.
+ * @param {HTMLElement} root
+ * @param {import('../format/schema.js').TransferDocument} importDoc
+ */
+async function runImport(root, importDoc) {
+  const authGate = root.querySelector('[data-bdt-import-auth]');
+  const statusEl = root.querySelector('[data-bdt-import-status]');
+  const logEl = root.querySelector('[data-bdt-log]');
+  const importBtn = root.querySelector('[data-bdt-import]');
+
+  if (importBtn) importBtn.disabled = true;
+  importReady = true;
+  clearImportErrors(root);
+  setImportStep(root, 'importing');
+
+  if (authGate) {
+    authGate.hidden = true;
+    authGate.innerHTML = '';
+  }
+
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.innerHTML = `
+      <div class="bdt-stage__orb" aria-hidden="true"></div>
+      <h3 class="bdt-stage__title">${escapeHtml(t.importStepImportingTitle)}</h3>
+      <p class="bdt-stage__text">${escapeHtml(fmt(t.importStepImportingLead, { count: importDoc.entries.length }))}</p>
+    `;
+  }
+
+  if (logEl) {
+    logEl.hidden = false;
+    logEl.textContent = '';
+  }
+
+  try {
+    const summary = await importTransferToBackloggd(importDoc, {
+      dryRun: false,
+      delayMs: settings.importDelayMs,
+      onProgress({ index, total, entry, result }) {
+        const line = fmt(t.importProgress, {
+          index: index + 1,
+          total,
+          title: entryDisplayTitle(entry),
+        });
+        const status = result.ok
+          ? t.importLogOk
+          : fmt(t.importLogFail, { error: result.error || 'fail' });
+        if (logEl) {
+          logEl.textContent += `${line} — ${status}\n`;
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+      },
+    });
+
+    setImportStep(root, 'done');
+    renderImportResult(root, summary, importDoc.entries);
+
+    try {
+      recordImportHistory({
+        filename: pendingFile?.name || '',
+        doc: importDoc,
+        summary,
+        entries: importDoc.entries,
+      });
+      syncHistoryTabBadge(root);
+    } catch (_) {
+      /* history is best-effort */
+    }
+
+    const toastType =
+      summary.failCount === 0
+        ? 'success'
+        : summary.okCount === 0
+          ? 'error'
+          : 'warning';
+    const toastTitle =
+      summary.failCount === 0
+        ? t.importDoneTitle
+        : summary.okCount === 0
+          ? t.importFailedTitle
+          : t.importPartialTitle;
+
+    showToast(
+      fmt(t.importDone, {
+        ok: summary.okCount,
+        fail: summary.failCount,
+      }),
+      { type: toastType, title: toastTitle },
+    );
+  } catch (err) {
+    setImportStep(root, 'done');
+    const message = err instanceof Error ? err.message : String(err);
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.innerHTML = `
+        <div class="bdt-stage__orb bdt-stage__orb--fail" aria-hidden="true"></div>
+        <h3 class="bdt-stage__title">${escapeHtml(t.importFailedTitle)}</h3>
+        <p class="bdt-stage__text">${escapeHtml(message)}</p>
+      `;
+    }
+    renderImportErrors(root, [
+      {
+        kind: 'error',
+        text: message,
+        detail: message,
+      },
+    ]);
+    if (logEl) {
+      logEl.hidden = false;
+      logEl.textContent = message;
+    }
+    showToast(message, { type: 'error', title: t.importFailedTitle });
+  } finally {
+    syncImportButton(root);
+  }
 }
 
 function formatAccept(format) {
@@ -311,24 +549,53 @@ function updateDropzoneUi(root) {
 }
 
 /**
+ * Formats currently available for import selection.
+ * @type {ReadonlySet<string>}
+ */
+const READY_IMPORT_FORMATS = new Set(['json']);
+
+/**
  * @param {HTMLElement} root
  * @param {'json' | 'csv'} format
  */
 function setImportFormat(root, format) {
-  importFormat = format === 'csv' ? 'csv' : 'json';
+  const next = format === 'csv' ? 'csv' : 'json';
+  if (!READY_IMPORT_FORMATS.has(next)) {
+    showToast(t.importCsvStub, { type: 'warning', title: t.toastCsvSoonTitle });
+    return;
+  }
+
+  importFormat = next;
   saveSettings({ ...settings, importFormat });
   reloadRuntimeSettings();
-
-  root.querySelectorAll('[data-bdt-format]').forEach((btn) => {
-    const active = btn.getAttribute('data-bdt-format') === importFormat;
-    btn.classList.toggle('is-active', active);
-    btn.setAttribute('aria-checked', active ? 'true' : 'false');
-  });
+  syncFormatCards(root);
 
   const input = root.querySelector('[data-bdt-file]');
   if (input) input.accept = formatAccept(importFormat);
 
   clearPendingFile(root);
+}
+
+/**
+ * @param {HTMLElement} root
+ */
+function syncFormatCards(root) {
+  root.querySelectorAll('[data-bdt-format]').forEach((btn) => {
+    const format = btn.getAttribute('data-bdt-format') || '';
+    const ready = READY_IMPORT_FORMATS.has(format);
+    const active = ready && format === importFormat;
+
+    btn.classList.toggle('is-active', active);
+    btn.classList.toggle('is-disabled', !ready);
+    btn.disabled = !ready;
+    btn.setAttribute('aria-checked', active ? 'true' : 'false');
+    btn.setAttribute('aria-disabled', ready ? 'false' : 'true');
+    if (!ready) {
+      btn.setAttribute('title', t.importCsvStub);
+    } else {
+      btn.removeAttribute('title');
+    }
+  });
 }
 
 function applySelectedFile(root, file) {
@@ -463,7 +730,9 @@ export function openPanel(tab = 'import') {
   importStep = 'file';
   reviewReady = false;
   importReady = false;
-  importFormat = settings.importFormat === 'csv' ? 'csv' : 'json';
+  importFormat = READY_IMPORT_FORMATS.has(settings.importFormat)
+    ? settings.importFormat
+    : 'json';
 
   const backdrop = document.createElement('div');
   backdrop.id = PANEL_ID;
@@ -479,6 +748,10 @@ export function openPanel(tab = 'import') {
       </header>
       <nav class="bdt-panel__tabs" role="tablist">
         <button type="button" class="bdt-tab" data-bdt-tab="import" role="tab">${escapeHtml(t.tabImport)}</button>
+        <button type="button" class="bdt-tab" data-bdt-tab="history" role="tab">
+          ${escapeHtml(t.tabHistory)}
+          <span class="bdt-tab__badge" data-bdt-history-badge hidden>0</span>
+        </button>
         <button type="button" class="bdt-tab" data-bdt-tab="about" role="tab">${escapeHtml(t.tabAbout)}</button>
       </nav>
       <div class="bdt-panel__body">
@@ -523,7 +796,16 @@ export function openPanel(tab = 'import') {
                     </span>
                     <span class="bdt-format-card__check" aria-hidden="true"></span>
                   </button>
-                  <button type="button" class="bdt-format-card" data-bdt-format="csv" role="radio" aria-checked="false">
+                  <button
+                    type="button"
+                    class="bdt-format-card is-disabled"
+                    data-bdt-format="csv"
+                    role="radio"
+                    aria-checked="false"
+                    aria-disabled="true"
+                    disabled
+                    title="${escapeAttr(t.importCsvStub)}"
+                  >
                     <span class="bdt-format-card__icon" aria-hidden="true"><i class="fa-solid fa-align-right"></i></span>
                     <span class="bdt-format-card__body">
                       <span class="bdt-format-card__top">
@@ -589,7 +871,9 @@ export function openPanel(tab = 'import') {
             </div>
 
             <div class="bdt-stage" data-bdt-stage="import" hidden>
+              <div class="bdt-auth-gate" data-bdt-import-auth hidden></div>
               <div class="bdt-stage__hero" data-bdt-import-status></div>
+              <div class="bdt-errors" data-bdt-import-errors hidden></div>
               <pre class="bdt-log" data-bdt-log hidden></pre>
               <div class="bdt-stage__footer">
                 <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-back-review>${escapeHtml(t.importBackReview)}</button>
@@ -598,6 +882,7 @@ export function openPanel(tab = 'import') {
             </div>
           </div>
         </section>
+        <section class="bdt-tab-panel" data-bdt-panel="history" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="about" hidden>
           <p>${escapeHtml(t.aboutBody)}</p>
           <p>
@@ -612,6 +897,7 @@ export function openPanel(tab = 'import') {
 
   document.body.appendChild(backdrop);
   lockPageScroll();
+  syncHistoryTabBadge(backdrop);
 
   const close = () => closePanel();
   backdrop.addEventListener('click', (e) => {
@@ -625,7 +911,12 @@ export function openPanel(tab = 'import') {
 
   backdrop.querySelectorAll('[data-bdt-format]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      setImportFormat(backdrop, btn.getAttribute('data-bdt-format') === 'csv' ? 'csv' : 'json');
+      const format = btn.getAttribute('data-bdt-format') === 'csv' ? 'csv' : 'json';
+      if (!READY_IMPORT_FORMATS.has(format) || btn.disabled) {
+        showToast(t.importCsvStub, { type: 'warning', title: t.toastCsvSoonTitle });
+        return;
+      }
+      setImportFormat(backdrop, format);
     });
   });
 
@@ -876,87 +1167,37 @@ export function openPanel(tab = 'import') {
       entries: loadedDoc.entries.filter((_, index) => selectedIndices.has(index)),
     };
 
-    const importBtn = backdrop.querySelector('[data-bdt-import]');
-    if (importBtn) importBtn.disabled = true;
-    importReady = true;
-    setImportStep(backdrop, 'importing');
-
-    const statusEl = backdrop.querySelector('[data-bdt-import-status]');
-    if (statusEl) {
-      statusEl.innerHTML = `
-        <div class="bdt-stage__orb" aria-hidden="true"></div>
-        <h3 class="bdt-stage__title">${escapeHtml(t.importStepImportingTitle)}</h3>
-        <p class="bdt-stage__text">${escapeHtml(fmt(t.importStepImportingLead, { count: importDoc.entries.length }))}</p>
-      `;
-    }
-
-    const logEl = backdrop.querySelector('[data-bdt-log]');
-    if (logEl) {
-      logEl.hidden = false;
-      logEl.textContent = '';
-    }
-
-    try {
-      const summary = await importTransferToBackloggd(importDoc, {
-        dryRun: false,
-        delayMs: settings.importDelayMs,
-        onProgress({ index, total, entry, result }) {
-          const line = fmt(t.importProgress, {
-            index: index + 1,
-            total,
-            title: entryDisplayTitle(entry),
-          });
-          const status = result.ok
-            ? t.importLogOk
-            : fmt(t.importLogFail, { error: result.error || 'fail' });
-          if (logEl) {
-            logEl.textContent += `${line} — ${status}\n`;
-            logEl.scrollTop = logEl.scrollHeight;
-          }
-        },
+    if (!isLoggedIn()) {
+      const importBtn = backdrop.querySelector('[data-bdt-import]');
+      if (importBtn) importBtn.disabled = true;
+      showImportAuthGate(backdrop, {
+        title: t.importNeedLoginTitle,
+        body: t.importNeedLoginBody,
       });
-
-      setImportStep(backdrop, 'done');
-      renderImportResult(backdrop, summary, importDoc.entries);
-
-      const toastType =
-        summary.failCount === 0
-          ? 'success'
-          : summary.okCount === 0
-            ? 'error'
-            : 'warning';
-      const toastTitle =
-        summary.failCount === 0
-          ? t.importDoneTitle
-          : summary.okCount === 0
-            ? t.importFailedTitle
-            : t.importPartialTitle;
-
-      showToast(
-        fmt(t.importDone, {
-          ok: summary.okCount,
-          fail: summary.failCount,
-        }),
-        { type: toastType, title: toastTitle },
-      );
-    } catch (err) {
-      setImportStep(backdrop, 'done');
-      const message = err instanceof Error ? err.message : String(err);
-      if (statusEl) {
-        statusEl.innerHTML = `
-          <div class="bdt-stage__orb bdt-stage__orb--fail" aria-hidden="true"></div>
-          <h3 class="bdt-stage__title">${escapeHtml(t.importFailedTitle)}</h3>
-          <p class="bdt-stage__text">${escapeHtml(message)}</p>
-        `;
-      }
-      if (logEl) {
-        logEl.hidden = false;
-        logEl.textContent = message;
-      }
-      showToast(message, { type: 'error', title: t.importFailedTitle });
-    } finally {
       syncImportButton(backdrop);
+      return;
     }
+
+    if (!getCsrfToken()) {
+      const importBtn = backdrop.querySelector('[data-bdt-import]');
+      if (importBtn) importBtn.disabled = true;
+      showImportAuthGate(backdrop, {
+        title: t.importNeedLoginTitle,
+        body: t.importNeedCsrfBody,
+      });
+      syncImportButton(backdrop);
+      return;
+    }
+
+    if (findBackloggdUserId() == null) {
+      const importBtn = backdrop.querySelector('[data-bdt-import]');
+      if (importBtn) importBtn.disabled = true;
+      showImportUserIdGate(backdrop, importDoc);
+      syncImportButton(backdrop);
+      return;
+    }
+
+    await runImport(backdrop, importDoc);
   });
 
   backdrop.querySelector('[data-bdt-example]')?.addEventListener('click', () => {
@@ -970,11 +1211,7 @@ export function openPanel(tab = 'import') {
   });
 
   // Apply initial format UI without clearing twice
-  backdrop.querySelectorAll('[data-bdt-format]').forEach((btn) => {
-    const active = btn.getAttribute('data-bdt-format') === importFormat;
-    btn.classList.toggle('is-active', active);
-    btn.setAttribute('aria-checked', active ? 'true' : 'false');
-  });
+  syncFormatCards(backdrop);
   updateDropzoneUi(backdrop);
   syncActionButtons(backdrop);
   setImportStep(backdrop, 'file');
@@ -989,6 +1226,9 @@ function selectTab(backdrop, tab) {
   backdrop.querySelectorAll('[data-bdt-panel]').forEach((panel) => {
     panel.hidden = panel.getAttribute('data-bdt-panel') !== tab;
   });
+  if (tab === 'history') {
+    renderHistoryPanel(backdrop);
+  }
 }
 
 export function closePanel() {

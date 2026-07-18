@@ -235,7 +235,7 @@ export const TRANSLATIONS = {
     settingsMs: 'ms',
     settingsMatchConcurrency: 'Parallel match requests',
     settingsMatchConcurrencyHint:
-      'How many Backloggd title lookups run at once during Read.',
+      'How many Backloggd requests run at once (library pages + title lookups during Read).',
     settingsMatchConcurrencyRange: '{min}–{max}',
     settingsDebugMode: 'Debug mode',
     settingsDebugModeHint:
@@ -395,9 +395,11 @@ export const TRANSLATIONS = {
     cleanupIdleStep2: 'Checks each game’s log page',
     cleanupIdleStep3: 'Opens matches so you can clean them up',
     cleanupScanningLibrary: 'Loading your library…',
+    cleanupScanningLibraryParallel: 'Library · {done} pages · {active} in parallel',
     cleanupScanningShelf: 'Shelf “{list}”, page {page}',
     cleanupScanningShelfMeta: 'Shelf {index}/{total}',
     cleanupScanningGame: 'Checking {index}/{total}: {title}',
+    cleanupScanningGameParallel: 'Checking {current}/{total} · {active} in parallel',
     cleanupScanningGameMeta: '{found} multi-log games so far',
     cleanupErrorTitle: 'Scan failed',
     cleanupErrorBody: 'Could not finish the multi-log scan. Try again in a moment.',
@@ -668,7 +670,7 @@ export const TRANSLATIONS = {
     settingsMs: 'мс',
     settingsMatchConcurrency: 'Параллельных запросов',
     settingsMatchConcurrencyHint:
-      'Сколько поисков названий на Backloggd выполняется одновременно при чтении.',
+      'Сколько запросов к Backloggd выполняется одновременно (страницы библиотеки и поиск названий при чтении).',
     settingsMatchConcurrencyRange: '{min}–{max}',
     settingsDebugMode: 'Режим отладки',
     settingsDebugModeHint:
@@ -828,9 +830,11 @@ export const TRANSLATIONS = {
     cleanupIdleStep2: 'Проверяет страницу логов каждой игры',
     cleanupIdleStep3: 'Открывает совпадения, чтобы почистить вручную',
     cleanupScanningLibrary: 'Загружаем библиотеку…',
+    cleanupScanningLibraryParallel: 'Библиотека · {done} стр. · параллельно {active}',
     cleanupScanningShelf: 'Полка «{list}», страница {page}',
     cleanupScanningShelfMeta: 'Полка {index}/{total}',
     cleanupScanningGame: 'Проверка {index}/{total}: {title}',
+    cleanupScanningGameParallel: 'Проверка {current}/{total} · параллельно {active}',
     cleanupScanningGameMeta: 'Найдено мультилогов: {found}',
     cleanupErrorTitle: 'Скан не удался',
     cleanupErrorBody: 'Не удалось завершить поиск мультилогов. Попробуйте чуть позже.',

@@ -3,7 +3,7 @@ import { scanMultiLogGames } from '../destinations/backloggd/multi-logs.js';
 import { isLoggedIn } from '../destinations/backloggd/auth.js';
 import { getCurrentUsername } from '../destinations/backloggd/user.js';
 import { fmt } from '../i18n/index.js';
-import { t } from '../state.js';
+import { settings, t } from '../state.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
 import { showToast } from './toast.js';
 
@@ -162,6 +162,7 @@ function renderBody(visible) {
           <span class="bdt-progress__label" data-bdt-cleanup-progress-label>${escapeHtml(t.cleanupScanningLibrary)}</span>
           <span class="bdt-progress__pct" data-bdt-cleanup-progress-pct>0%</span>
         </div>
+        <div class="bdt-progress__active" data-bdt-cleanup-progress-active hidden></div>
         <div class="bdt-progress__track">
           <div class="bdt-progress__fill" data-bdt-cleanup-progress-fill style="width:0%"></div>
         </div>
@@ -573,6 +574,7 @@ async function startCleanupScan(root) {
 
   try {
     const result = await scanMultiLogGames({
+      concurrency: settings.matchConcurrency,
       shouldCancel: () => scanCancelled,
       onProgress: (info) => updateScanProgress(root, info),
     });
@@ -633,10 +635,15 @@ async function startCleanupScan(root) {
  *   listTotal?: number,
  *   page?: number,
  *   list?: string,
+ *   pagesDone?: number,
  *   index?: number,
  *   total?: number,
+ *   done?: number,
  *   title?: string,
  *   multiFound?: number,
+ *   concurrency?: number,
+ *   activeTitles?: string[],
+ *   activeLists?: string[],
  * }} info
  */
 function updateScanProgress(root, info) {
@@ -644,40 +651,89 @@ function updateScanProgress(root, info) {
   const pctEl = root.querySelector('[data-bdt-cleanup-progress-pct]');
   const fill = root.querySelector('[data-bdt-cleanup-progress-fill]');
   const meta = root.querySelector('[data-bdt-cleanup-progress-meta]');
+  const activeEl = root.querySelector('[data-bdt-cleanup-progress-active]');
   if (!label || !pctEl || !fill) return;
 
   let pct = 0;
   let labelText = t.cleanupScanningLibrary;
   let metaText = '';
+  const concurrency = Math.max(0, Number(info.concurrency) || 0);
+  /** @type {string[]} */
+  const chips = [];
 
   if (info.phase === 'library') {
     const listTotal = Math.max(1, info.listTotal || 1);
+    const pagesDone = Number(info.pagesDone) || 0;
+    const active = Array.isArray(info.activeLists) ? info.activeLists.length : 0;
     const listIndex = info.listIndex || 0;
-    pct = Math.min(28, Math.round(((listIndex + 0.35) / listTotal) * 28));
-    labelText = fmt(t.cleanupScanningShelf, {
-      list: info.list || '',
-      page: info.page || 1,
-    });
+    if (pagesDone > 0 || active > 0) {
+      pct = Math.min(
+        28,
+        Math.round(
+          ((pagesDone + 0.35) / Math.max(pagesDone + active + 1, listTotal)) * 28,
+        ),
+      );
+    } else {
+      pct = Math.min(28, Math.round(((listIndex + 0.35) / listTotal) * 28));
+    }
+    labelText =
+      concurrency > 1
+        ? fmt(t.cleanupScanningLibraryParallel, {
+            done: pagesDone,
+            active: Math.min(concurrency, active || concurrency),
+          })
+        : fmt(t.cleanupScanningShelf, {
+            list: info.list || '',
+            page: info.page || 1,
+          });
     metaText = fmt(t.cleanupScanningShelfMeta, {
       index: listIndex + 1,
       total: listTotal,
     });
+    if (Array.isArray(info.activeLists)) chips.push(...info.activeLists);
   } else {
     const total = Math.max(1, info.total || 1);
-    const index = info.index || 0;
-    pct = 28 + Math.round(((index + 1) / total) * 72);
-    labelText = fmt(t.cleanupScanningGame, {
-      title: info.title || '',
-      index: index + 1,
-      total,
-    });
+    const done = Number.isFinite(info.done) ? Number(info.done) : (info.index || 0) + 1;
+    pct = 28 + Math.round((done / total) * 72);
+    labelText =
+      concurrency > 1
+        ? fmt(t.cleanupScanningGameParallel, {
+            current: done,
+            total,
+            active: Math.min(
+              concurrency,
+              Array.isArray(info.activeTitles) ? info.activeTitles.length : concurrency,
+            ),
+          })
+        : fmt(t.cleanupScanningGame, {
+            title: info.title || '',
+            index: done,
+            total,
+          });
     metaText = fmt(t.cleanupScanningGameMeta, {
       found: info.multiFound || 0,
     });
+    if (Array.isArray(info.activeTitles)) chips.push(...info.activeTitles);
   }
 
   label.textContent = labelText;
   pctEl.textContent = `${pct}%`;
   /** @type {HTMLElement} */ (fill).style.width = `${pct}%`;
   if (meta) meta.textContent = metaText;
+
+  if (activeEl) {
+    if (chips.length) {
+      activeEl.hidden = false;
+      activeEl.innerHTML = chips
+        .slice(0, 6)
+        .map(
+          (title) =>
+            `<span class="bdt-progress__chip" title="${escapeAttr(title)}">${escapeHtml(title)}</span>`,
+        )
+        .join('');
+    } else {
+      activeEl.hidden = true;
+      activeEl.innerHTML = '';
+    }
+  }
 }

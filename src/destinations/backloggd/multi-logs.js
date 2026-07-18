@@ -1,5 +1,11 @@
-import { LIBRARY_PAGE_DELAY_MS, MATCH_DELAY_MS } from '../../constants.js';
+import {
+  LIBRARY_CONCURRENCY,
+  MATCH_CONCURRENCY,
+  MATCH_CONCURRENCY_MAX,
+  MATCH_DELAY_MS,
+} from '../../constants.js';
 import { sleepJitter } from '../../utils/delay.js';
+import { mapPool } from '../../utils/pool.js';
 import { loadCurrentUserLibrary, probeUserLogDetails } from './library.js';
 import { getCurrentUsername } from './user.js';
 
@@ -32,16 +38,22 @@ import { getCurrentUsername } from './user.js';
  * Scan the current user's library for games with more than one log.
  *
  * @param {{
+ *   concurrency?: number,
  *   onProgress?: (info: {
  *     phase: 'library' | 'probe',
  *     listIndex?: number,
  *     listTotal?: number,
  *     page?: number,
  *     list?: string,
+ *     pagesDone?: number,
  *     index?: number,
  *     total?: number,
+ *     done?: number,
  *     title?: string,
  *     multiFound?: number,
+ *     concurrency?: number,
+ *     activeTitles?: string[],
+ *     activeLists?: string[],
  *   }) => void,
  *   shouldCancel?: () => boolean,
  *   minLogs?: number,
@@ -61,8 +73,20 @@ export async function scanMultiLogGames(options = {}) {
   }
 
   const minLogs = Math.max(2, Number(options.minLogs) || 2);
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      MATCH_CONCURRENCY_MAX,
+      Math.floor(
+        Number.isFinite(options.concurrency)
+          ? Number(options.concurrency)
+          : MATCH_CONCURRENCY || LIBRARY_CONCURRENCY,
+      ),
+    ),
+  );
 
   const library = await loadCurrentUserLibrary({
+    concurrency,
     onProgress: (info) => {
       options.onProgress?.({
         phase: 'library',
@@ -70,6 +94,9 @@ export async function scanMultiLogGames(options = {}) {
         listTotal: info.listTotal,
         page: info.page,
         list: info.list,
+        pagesDone: info.pagesDone,
+        concurrency: info.concurrency ?? concurrency,
+        activeLists: info.activeLists,
         multiFound: 0,
       });
     },
@@ -95,52 +122,79 @@ export async function scanMultiLogGames(options = {}) {
   /** @type {MultiLogGame[]} */
   const multi = [];
   let errors = 0;
+  let done = 0;
+  /** @type {Map<number, string>} */
+  const activeByIndex = new Map();
 
-  for (let index = 0; index < candidates.length; index += 1) {
-    if (options.shouldCancel?.()) break;
+  await mapPool(
+    candidates.length,
+    concurrency,
+    async (index) => {
+      if (options.shouldCancel?.()) return;
 
-    const game = candidates[index];
-    options.onProgress?.({
-      phase: 'probe',
-      index,
-      total: candidates.length,
-      title: game.title || game.slug,
-      multiFound: multi.length,
-    });
-
-    try {
-      const detail = await probeUserLogDetails({
-        gameId: game.gameId,
-        slug: game.slug,
-        username,
+      const game = candidates[index];
+      const title = game.title || game.slug;
+      activeByIndex.set(index, title || `#${index + 1}`);
+      options.onProgress?.({
+        phase: 'probe',
+        index,
+        total: candidates.length,
+        done,
+        title,
+        multiFound: multi.length,
+        concurrency,
+        activeTitles: [...activeByIndex.values()],
       });
 
-      if (detail.exists && detail.logCount >= minLogs) {
-        multi.push({
+      try {
+        const detail = await probeUserLogDetails({
           gameId: game.gameId,
           slug: game.slug,
-          title: game.title || game.slug,
-          coverUrl: game.coverUrl,
-          logCount: detail.logCount,
-          gameStatus: detail.gameStatus || null,
-          logs: detail.logs,
-          logUrl: detail.logUrl,
+          username,
+        });
+
+        if (detail.exists && detail.logCount >= minLogs) {
+          multi.push({
+            gameId: game.gameId,
+            slug: game.slug,
+            title: game.title || game.slug,
+            coverUrl: game.coverUrl,
+            logCount: detail.logCount,
+            gameStatus: detail.gameStatus || null,
+            logs: detail.logs,
+            logUrl: detail.logUrl,
+          });
+        }
+      } catch (_) {
+        errors += 1;
+      } finally {
+        activeByIndex.delete(index);
+      }
+
+      done += 1;
+      options.onProgress?.({
+        phase: 'probe',
+        index,
+        total: candidates.length,
+        done,
+        title,
+        multiFound: multi.length,
+        concurrency,
+        activeTitles: [...activeByIndex.values()],
+      });
+
+      if (!options.shouldCancel?.()) {
+        await sleepJitter(MATCH_DELAY_MS * 0.7, {
+          minFactor: 0.75,
+          maxFactor: 1.5,
+          pauseChance: 0.06,
+          pauseMinMs: 120,
+          pauseMaxMs: 450,
         });
       }
-    } catch (_) {
-      errors += 1;
-    }
-
-    if (index < candidates.length - 1 && !options.shouldCancel?.()) {
-      await sleepJitter(Math.max(LIBRARY_PAGE_DELAY_MS, MATCH_DELAY_MS * 0.7), {
-        minFactor: 0.75,
-        maxFactor: 1.6,
-        pauseChance: 0.08,
-        pauseMinMs: 180,
-        pauseMaxMs: 700,
-      });
-    }
-  }
+    },
+    { shouldCancel: options.shouldCancel },
+  );
 
   multi.sort((a, b) => {
     if (b.logCount !== a.logCount) return b.logCount - a.logCount;

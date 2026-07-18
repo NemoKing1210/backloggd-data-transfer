@@ -1,6 +1,11 @@
-import { LIBRARY_PAGE_DELAY_MS } from '../../constants.js';
+import {
+  LIBRARY_CONCURRENCY,
+  LIBRARY_PAGE_DELAY_MS,
+  MATCH_CONCURRENCY_MAX,
+} from '../../constants.js';
 import { gmRequest } from '../../gm.js';
 import { sleepJitter } from '../../utils/delay.js';
+import { mapPool, createLimiter } from '../../utils/pool.js';
 import { backloggdUrl } from './site.js';
 import { getCurrentUsername } from './user.js';
 
@@ -44,9 +49,19 @@ const MAX_PAGES_PER_SHELF = 200;
 
 /**
  * Load the current user's logged games into id/slug sets (same-origin fetch).
+ * Different shelves (and known pages within a shelf) load in parallel.
  *
  * @param {{
- *   onProgress?: (info: { listIndex: number, listTotal: number, page: number, list: string }) => void,
+ *   concurrency?: number,
+ *   onProgress?: (info: {
+ *     listIndex: number,
+ *     listTotal: number,
+ *     page: number,
+ *     list: string,
+ *     pagesDone?: number,
+ *     concurrency?: number,
+ *     activeLists?: string[],
+ *   }) => void,
  *   shouldCancel?: () => boolean,
  * }} [options]
  * @returns {Promise<UserLibraryIndex>}
@@ -57,6 +72,14 @@ export async function loadCurrentUserLibrary(options = {}) {
     throw new Error('Not logged in — cannot load library');
   }
 
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      MATCH_CONCURRENCY_MAX,
+      Math.floor(Number(options.concurrency) || LIBRARY_CONCURRENCY),
+    ),
+  );
+
   /** @type {Set<number>} */
   const gameIds = new Set();
   /** @type {Set<string>} */
@@ -64,79 +87,99 @@ export async function loadCurrentUserLibrary(options = {}) {
   /** @type {Map<string, LibraryGame>} */
   const gamesByKey = new Map();
   let pageCount = 0;
+  let pagesDone = 0;
   let loadedAnyPage = false;
   /** @type {string | null} */
   let lastError = null;
+  /** @type {Map<number, string>} */
+  const activeByList = new Map();
+  const limit = createLimiter(concurrency);
 
-  for (let listIndex = 0; listIndex < LIBRARY_LISTS.length; listIndex += 1) {
-    if (options.shouldCancel?.()) break;
+  const emitProgress = (listIndex, page, listKey) => {
+    options.onProgress?.({
+      listIndex,
+      listTotal: LIBRARY_LISTS.length,
+      page,
+      list: listKey,
+      pagesDone,
+      concurrency,
+      activeLists: [...activeByList.values()],
+    });
+  };
 
-    const { key, path } = LIBRARY_LISTS[listIndex];
-    const basePath = `/u/${encodeURIComponent(username)}/${path}`;
-    /** @type {string | null} */
-    let previousFingerprint = null;
+  // Run all shelves concurrently; individual fetches share `limit` so total
+  // in-flight requests stay within `concurrency`.
+  const shelfResults = await mapPool(
+    LIBRARY_LISTS.length,
+    concurrency,
+    async (listIndex) => {
+      if (options.shouldCancel?.()) return null;
 
-    for (let page = 1; page <= MAX_PAGES_PER_SHELF; page += 1) {
-      if (options.shouldCancel?.()) break;
-
-      options.onProgress?.({
-        listIndex,
-        listTotal: LIBRARY_LISTS.length,
-        page,
-        list: key,
-      });
-
-      const url = backloggdUrl(`${basePath}?page=${page}`);
-      const sourcePath = `${basePath}?page=${page}`;
-      let html;
+      const { key, path } = LIBRARY_LISTS[listIndex];
+      /** @type {Set<number>} */
+      const activePages = new Set();
       try {
-        html = await fetchLibraryHtml(url);
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
-        // Keep whatever we already collected — do not abort the whole library.
-        break;
-      }
-
-      loadedAnyPage = true;
-      pageCount += 1;
-      const parsed = parseLibraryPage(html, page);
-
-      if (!parsed.gameIds.length && !parsed.slugs.length) break;
-
-      const fingerprint = parsed.gameIds.join(',') || parsed.slugs.join(',');
-      if (fingerprint && fingerprint === previousFingerprint) break;
-      previousFingerprint = fingerprint;
-
-      for (const id of parsed.gameIds) gameIds.add(id);
-      for (const slug of parsed.slugs) slugs.add(slug);
-      for (const game of parsed.games) {
-        mergeLibraryGame(gamesByKey, {
-          ...game,
-          sourceUrl: sourcePath,
-          sourceList: key,
-          sourcePage: page,
+        return await loadLibraryShelf({
+          username,
+          listIndex,
+          listKey: key,
+          path,
+          concurrency,
+          limit,
+          shouldCancel: options.shouldCancel,
+          onPageStart(page) {
+            activePages.add(page);
+            const pages = [...activePages].sort((a, b) => a - b);
+            activeByList.set(
+              listIndex,
+              pages.length === 1
+                ? `${key} · p${pages[0]}`
+                : `${key} · p${pages[0]}–${pages[pages.length - 1]}`,
+            );
+            emitProgress(listIndex, page, key);
+          },
+          onPageDone(page) {
+            pagesDone += 1;
+            activePages.delete(page);
+            if (activePages.size === 0) {
+              activeByList.delete(listIndex);
+            } else {
+              const pages = [...activePages].sort((a, b) => a - b);
+              activeByList.set(
+                listIndex,
+                pages.length === 1
+                  ? `${key} · p${pages[0]}`
+                  : `${key} · p${pages[0]}–${pages[pages.length - 1]}`,
+              );
+            }
+            emitProgress(listIndex, page, key);
+          },
         });
+      } catch (err) {
+        activeByList.delete(listIndex);
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          error: message,
+          pageCount: 0,
+          games: /** @type {LibraryGame[]} */ ([]),
+        };
       }
+    },
+    { shouldCancel: options.shouldCancel },
+  );
 
-      if (!parsed.hasNext) break;
-
-      await sleepJitter(LIBRARY_PAGE_DELAY_MS, {
-        minFactor: 0.75,
-        maxFactor: 1.8,
-        pauseChance: 0.1,
-        pauseMinMs: 200,
-        pauseMaxMs: 900,
-      });
+  for (const partial of shelfResults) {
+    if (!partial) continue;
+    if (partial.error) {
+      lastError = partial.error;
+      continue;
     }
-
-    if (listIndex < LIBRARY_LISTS.length - 1 && !options.shouldCancel?.()) {
-      await sleepJitter(LIBRARY_PAGE_DELAY_MS * 1.4, {
-        minFactor: 0.8,
-        maxFactor: 1.7,
-        pauseChance: 0.15,
-        pauseMinMs: 250,
-        pauseMaxMs: 1100,
-      });
+    loadedAnyPage = true;
+    pageCount += partial.pageCount;
+    for (const game of partial.games) {
+      if (game.gameId != null) gameIds.add(game.gameId);
+      if (game.slug) slugs.add(game.slug);
+      mergeLibraryGame(gamesByKey, game);
     }
   }
 
@@ -153,6 +196,150 @@ export async function loadCurrentUserLibrary(options = {}) {
       a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }),
     ),
   };
+}
+
+/**
+ * @param {{
+ *   username: string,
+ *   listIndex: number,
+ *   listKey: string,
+ *   path: string,
+ *   concurrency: number,
+ *   limit: <T>(fn: () => Promise<T>) => Promise<T>,
+ *   shouldCancel?: () => boolean,
+ *   onPageStart?: (page: number) => void,
+ *   onPageDone?: (page: number) => void,
+ * }} input
+ * @returns {Promise<{ pageCount: number, games: LibraryGame[], error?: undefined }>}
+ */
+async function loadLibraryShelf(input) {
+  const basePath = `/u/${encodeURIComponent(input.username)}/${input.path}`;
+  /** @type {LibraryGame[]} */
+  const games = [];
+  let pageCount = 0;
+  /** @type {string | null} */
+  let previousFingerprint = null;
+
+  /**
+   * @param {number} page
+   */
+  const fetchPage = async (page) => {
+    if (input.shouldCancel?.()) return null;
+    try {
+      return await input.limit(async () => {
+        if (input.shouldCancel?.()) return null;
+        input.onPageStart?.(page);
+        try {
+          const sourcePath = `${basePath}?page=${page}`;
+          const html = await fetchLibraryHtml(backloggdUrl(sourcePath));
+          const parsed = parseLibraryPage(html, page);
+          return { page, sourcePath, parsed };
+        } finally {
+          input.onPageDone?.(page);
+        }
+      });
+    } catch (_) {
+      return null;
+    }
+  };
+
+  /**
+   * @param {{ page: number, sourcePath: string, parsed: ReturnType<typeof parseLibraryPage> }} result
+   * @returns {'ok' | 'empty' | 'dup'}
+   */
+  const ingest = (result) => {
+    const { page, sourcePath, parsed } = result;
+    pageCount += 1;
+
+    if (!parsed.gameIds.length && !parsed.slugs.length) return 'empty';
+
+    const fingerprint = parsed.gameIds.join(',') || parsed.slugs.join(',');
+    if (fingerprint && fingerprint === previousFingerprint) return 'dup';
+    previousFingerprint = fingerprint;
+
+    for (const game of parsed.games) {
+      games.push({
+        ...game,
+        sourceUrl: sourcePath,
+        sourceList: input.listKey,
+        sourcePage: page,
+      });
+    }
+    return 'ok';
+  };
+
+  const first = await fetchPage(1);
+  if (!first) {
+    throw new Error(`Library list failed: ${input.listKey}`);
+  }
+  const firstStatus = ingest(first);
+  if (firstStatus !== 'ok' || !first.parsed.hasNext) {
+    return { pageCount, games };
+  }
+
+  const knownLast = first.parsed.maxPage;
+  if (knownLast != null && knownLast > 1) {
+    const last = Math.min(knownLast, MAX_PAGES_PER_SHELF);
+    const extra = last - 1;
+    if (extra > 0) {
+      const pages = await mapPool(
+        extra,
+        input.concurrency,
+        async (index) => fetchPage(index + 2),
+        { shouldCancel: input.shouldCancel },
+      );
+      for (const result of pages) {
+        if (!result) continue;
+        const status = ingest(result);
+        if (status === 'empty' || status === 'dup') break;
+      }
+    }
+    return { pageCount, games };
+  }
+
+  // Unknown total pages — fetch the next wave in parallel until a stop signal.
+  let nextPage = 2;
+  while (nextPage <= MAX_PAGES_PER_SHELF && !input.shouldCancel?.()) {
+    const waveSize = Math.min(
+      input.concurrency,
+      MAX_PAGES_PER_SHELF - nextPage + 1,
+    );
+    const wave = await mapPool(
+      waveSize,
+      waveSize,
+      async (index) => fetchPage(nextPage + index),
+      { shouldCancel: input.shouldCancel },
+    );
+
+    let stop = false;
+    for (const result of wave) {
+      if (!result) {
+        stop = true;
+        break;
+      }
+      const status = ingest(result);
+      if (status === 'empty' || status === 'dup') {
+        stop = true;
+        break;
+      }
+      if (!result.parsed.hasNext) {
+        stop = true;
+        break;
+      }
+    }
+    if (stop) break;
+
+    nextPage += waveSize;
+    await sleepJitter(LIBRARY_PAGE_DELAY_MS, {
+      minFactor: 0.7,
+      maxFactor: 1.5,
+      pauseChance: 0.08,
+      pauseMinMs: 120,
+      pauseMaxMs: 500,
+    });
+  }
+
+  return { pageCount, games };
 }
 
 /**
@@ -930,6 +1117,7 @@ function isLibraryGameSlug(slug) {
  *   slugs: string[],
  *   games: LibraryGame[],
  *   hasNext: boolean,
+ *   maxPage: number | null,
  * }}
  */
 function parseLibraryPage(html, currentPage = 1) {
@@ -1024,9 +1212,30 @@ function parseLibraryPage(html, currentPage = 1) {
     doc.querySelectorAll('[game_id]').forEach((el) => ingestCover(el));
   }
 
-  const hasNext = detectHasNextPage(doc, currentPage);
+  const maxPage = detectMaxPage(doc, currentPage);
+  const hasNext =
+    (maxPage != null && maxPage > currentPage) ||
+    detectHasNextPage(doc, currentPage);
 
-  return { gameIds, slugs, games, hasNext };
+  return { gameIds, slugs, games, hasNext, maxPage };
+}
+
+/**
+ * Highest page number linked from pagination (null if only current / unknown).
+ * @param {Document} doc
+ * @param {number} currentPage
+ * @returns {number | null}
+ */
+function detectMaxPage(doc, currentPage) {
+  let max = currentPage;
+  for (const a of doc.querySelectorAll('a[href*="page="]')) {
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/[?&]page=(\d+)/i);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max > currentPage ? max : null;
 }
 
 /**

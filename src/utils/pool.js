@@ -31,3 +31,37 @@ export async function mapPool(total, concurrency, fn, options = {}) {
   await Promise.all(Array.from({ length: limit }, () => worker()));
   return results;
 }
+
+/**
+ * Shared concurrency gate for nested parallel work (e.g. shelves × pages).
+ *
+ * @param {number} concurrency
+ * @returns {<T>(fn: () => Promise<T>) => Promise<T>}
+ */
+export function createLimiter(concurrency) {
+  const limit = Math.max(1, Math.floor(Number(concurrency) || 1));
+  let active = 0;
+  /** @type {(() => void)[]} */
+  const waiters = [];
+
+  /**
+   * @template T
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  return async function runLimited(fn) {
+    if (active >= limit) {
+      await new Promise((resolve) => {
+        waiters.push(resolve);
+      });
+    }
+    active += 1;
+    try {
+      return await fn();
+    } finally {
+      active -= 1;
+      const next = waiters.shift();
+      if (next) next();
+    }
+  };
+}

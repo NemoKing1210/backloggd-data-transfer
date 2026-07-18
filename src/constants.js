@@ -35,8 +35,10 @@ export const MATCH_DELAY_MS = 280;
 export const MATCH_CONCURRENCY = 4;
 export const MATCH_CONCURRENCY_MIN = 1;
 export const MATCH_CONCURRENCY_MAX = 8;
-/** Base delay between library page fetches. */
-export const LIBRARY_PAGE_DELAY_MS = 280;
+/** Default parallel fetches while indexing library shelves/pages. */
+export const LIBRARY_CONCURRENCY = MATCH_CONCURRENCY;
+/** Base delay between library page waves (when total pages are unknown). */
+export const LIBRARY_PAGE_DELAY_MS = 180;
 
 /** Canonical transfer file identity. */
 export const TRANSFER_FORMAT_ID = 'backloggd-transfer';

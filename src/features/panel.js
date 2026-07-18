@@ -660,18 +660,23 @@ async function runMatchAndReview(root, doc) {
     let libraryError = null;
     try {
       library = await loadCurrentUserLibrary({
+        concurrency: settings.matchConcurrency,
         shouldCancel: () => runId !== matchRunId,
-        onProgress({ listIndex, listTotal, page }) {
+        onProgress({ listIndex, listTotal, page, pagesDone, concurrency, activeLists }) {
           if (runId !== matchRunId) return;
+          const done = Number(pagesDone) || 0;
+          const active = Array.isArray(activeLists) ? activeLists.length : 0;
           setMatchProgress(root, {
             visible: true,
-            current: listIndex + 1,
-            total: listTotal,
+            current: done,
+            total: Math.max(done + active + 1, listTotal, 1),
             label: fmt(t.importLibraryProgressDetail, {
               list: listIndex + 1,
               total: listTotal,
               page,
             }),
+            activeTitles: activeLists || [],
+            concurrency: concurrency || 1,
           });
         },
       });

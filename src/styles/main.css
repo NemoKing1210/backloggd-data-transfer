@@ -3996,6 +3996,7 @@ a.bdt-btn--ghost:hover {
   border: 1px solid var(--bdt-border);
   background: rgba(0, 0, 0, 0.22);
   color: var(--bdt-muted);
+  margin-bottom: 0;
 }
 
 .bdt-cleanup-search input {

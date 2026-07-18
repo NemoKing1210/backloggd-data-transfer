@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] - 2026-07-18
+
+### Fixed
+
+- Library index no longer treats profile sort/filter links (`shuffle`, `title`, `added:asc`, …) as games.
+
+### Changed
+
+- Debug library block shows the source profile page (path + `?page=`) for each game.
+
+## [0.6.5] - 2026-07-18
+
+### Added
+
+- Settings tab: language, import delay, parallel match requests, debug mode.
+- Debug mode: expandable indexed-library list on the Review stage.
+
 ## [0.6.4] - 2026-07-18
 
 ### Changed

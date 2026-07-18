@@ -28,6 +28,9 @@ const MAX_PAGES_PER_SHELF = 200;
  * @property {string} slug
  * @property {string} title
  * @property {string | null} coverUrl
+ * @property {string | null} [sourceUrl] Relative profile list URL with query (debug).
+ * @property {string | null} [sourceList] Shelf key, e.g. played / backlog.
+ * @property {number | null} [sourcePage] 1-based page within that list.
  */
 
 /**
@@ -84,6 +87,7 @@ export async function loadCurrentUserLibrary(options = {}) {
       });
 
       const url = backloggdUrl(`${basePath}?page=${page}`);
+      const sourcePath = `${basePath}?page=${page}`;
       let html;
       try {
         html = await fetchLibraryHtml(url);
@@ -106,7 +110,12 @@ export async function loadCurrentUserLibrary(options = {}) {
       for (const id of parsed.gameIds) gameIds.add(id);
       for (const slug of parsed.slugs) slugs.add(slug);
       for (const game of parsed.games) {
-        mergeLibraryGame(gamesByKey, game);
+        mergeLibraryGame(gamesByKey, {
+          ...game,
+          sourceUrl: sourcePath,
+          sourceList: key,
+          sourcePage: page,
+        });
       }
 
       if (!parsed.hasNext) break;
@@ -702,6 +711,9 @@ function mergeLibraryGame(map, game) {
       slug,
       title: game.title || slug || (gameId != null ? `Game #${gameId}` : ''),
       coverUrl: game.coverUrl || null,
+      sourceUrl: game.sourceUrl || null,
+      sourceList: game.sourceList || null,
+      sourcePage: game.sourcePage ?? null,
     });
     return;
   }
@@ -719,6 +731,12 @@ function mergeLibraryGame(map, game) {
     prev.title = game.title;
   }
   if (game.coverUrl && !prev.coverUrl) prev.coverUrl = game.coverUrl;
+  // Keep the first discovery page for debug (where it entered the index).
+  if (!prev.sourceUrl && game.sourceUrl) prev.sourceUrl = game.sourceUrl;
+  if (!prev.sourceList && game.sourceList) prev.sourceList = game.sourceList;
+  if (prev.sourcePage == null && game.sourcePage != null) {
+    prev.sourcePage = game.sourcePage;
+  }
 }
 
 /**
@@ -861,6 +879,48 @@ function isSoftNotFoundPage(html) {
   );
 }
 
+/** Known non-game path segments under /games/ on list/sort chrome. */
+const LIBRARY_SORT_SLUGS = new Set([
+  'added',
+  'lib',
+  'games',
+  'search',
+  'popular',
+  'title',
+  'release',
+  'shuffle',
+  'rating',
+  'trending',
+  'time',
+  'last_played',
+  'last-played',
+  'user-rating',
+  'user_rating',
+  'avg-finish-time',
+  'avg-play-time',
+  'avg_finish_time',
+  'avg_play_time',
+]);
+
+/**
+ * Sort / filter nav on profile grids uses `/games/{token}/` — not real titles.
+ * @param {string} slug
+ */
+function isLibraryGameSlug(slug) {
+  const value = String(slug || '')
+    .trim()
+    .toLowerCase();
+  if (!value) return false;
+  // Sort directions and filter fragments: added:asc, type:played, etc.
+  if (value.includes(':')) return false;
+  if (LIBRARY_SORT_SLUGS.has(value)) return false;
+  // Underscore-only tokens are almost always UI keys (last_played), not game slugs.
+  if (/^[a-z0-9]+(?:_[a-z0-9]+)+$/.test(value) && !/-/.test(value)) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * @param {string} html
  * @param {number} [currentPage]
@@ -891,6 +951,8 @@ function parseLibraryPage(html, currentPage = 1) {
     const idRaw = Number(cover.getAttribute('game_id'));
     const gameId =
       Number.isFinite(idRaw) && idRaw > 0 ? idRaw : null;
+    // Profile grids always expose game_id on covers — skip chrome without it.
+    if (gameId == null) return;
 
     let anchor =
       cover.closest('a[href*="/games/"]') ||
@@ -904,21 +966,22 @@ function parseLibraryPage(html, currentPage = 1) {
 
     const href = anchor?.getAttribute?.('href') || '';
     const slugMatch = href.match(/\/games\/([^/?#]+)/i);
-    const slug = slugMatch?.[1]
+    const rawSlug = slugMatch?.[1]
       ? decodeURIComponent(slugMatch[1]).toLowerCase()
       : '';
+    const slug = isLibraryGameSlug(rawSlug) ? rawSlug : '';
 
-    if (gameId != null && !seenIds.has(gameId)) {
+    if (!seenIds.has(gameId)) {
       seenIds.add(gameId);
       gameIds.push(gameId);
     }
-    if (slug && slug !== 'lib' && slug !== 'added' && !seenSlugs.has(slug)) {
+    if (slug && !seenSlugs.has(slug)) {
       seenSlugs.add(slug);
       slugs.push(slug);
     }
 
-    const key = slug ? `s:${slug}` : gameId != null ? `i:${gameId}` : '';
-    if (!key || seenGameKeys.has(key)) return;
+    const key = slug ? `s:${slug}` : `i:${gameId}`;
+    if (seenGameKeys.has(key)) return;
     seenGameKeys.add(key);
 
     const img =
@@ -932,7 +995,7 @@ function parseLibraryPage(html, currentPage = 1) {
         anchor?.getAttribute('title') ||
         anchor?.getAttribute('aria-label') ||
         (slug ? slug.replace(/-/g, ' ') : '') ||
-        (gameId != null ? `Game #${gameId}` : ''),
+        `Game #${gameId}`,
     )
       .replace(/\s+/g, ' ')
       .trim();
@@ -952,48 +1015,13 @@ function parseLibraryPage(html, currentPage = 1) {
 
   doc
     .querySelectorAll(
-      '.game-cover[game_id], [game_id].game-cover, .rating-hover .game-cover',
+      '.game-cover[game_id], [game_id].game-cover, .rating-hover .game-cover[game_id]',
     )
     .forEach((el) => ingestCover(el));
 
   if (!gameIds.length) {
     doc.querySelectorAll('[game_id]').forEach((el) => ingestCover(el));
   }
-
-  doc.querySelectorAll('a[href*="/games/"]').forEach((el) => {
-    const href = el.getAttribute('href') || '';
-    const match = href.match(/\/games\/([^/?#]+)/i);
-    if (!match?.[1]) return;
-    const slug = decodeURIComponent(match[1]).toLowerCase();
-    if (!slug || slug === 'lib' || slug === 'added' || seenSlugs.has(slug)) {
-      return;
-    }
-    seenSlugs.add(slug);
-    slugs.push(slug);
-
-    const key = `s:${slug}`;
-    if (seenGameKeys.has(key)) return;
-    seenGameKeys.add(key);
-
-    const img = el.querySelector('img');
-    const title = String(
-      el.getAttribute('title') ||
-        el.getAttribute('aria-label') ||
-        img?.getAttribute('alt') ||
-        slug.replace(/-/g, ' '),
-    )
-      .replace(/\s+/g, ' ')
-      .trim();
-    games.push({
-      gameId: null,
-      slug,
-      title,
-      coverUrl:
-        img?.getAttribute('src') ||
-        img?.getAttribute('data-src') ||
-        null,
-    });
-  });
 
   const hasNext = detectHasNextPage(doc, currentPage);
 

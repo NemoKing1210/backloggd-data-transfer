@@ -31,8 +31,10 @@ export const ROOT_ATTR = 'data-bdt-root';
 export const SCAN_DEBOUNCE_MS = 400;
 /** Base delay after each network autocomplete lookup (per worker). */
 export const MATCH_DELAY_MS = 280;
-/** How many match lookups run in parallel during Read. */
+/** Default / clamp for parallel match lookups during Read. */
 export const MATCH_CONCURRENCY = 4;
+export const MATCH_CONCURRENCY_MIN = 1;
+export const MATCH_CONCURRENCY_MAX = 8;
 /** Base delay between library page fetches. */
 export const LIBRARY_PAGE_DELAY_MS = 280;
 
@@ -112,5 +114,7 @@ export const DEFAULT_SETTINGS = {
   importFormat: 'json',
   /** When false, games already in the user's library stay unchecked by default. */
   importExisting: false,
+  /** Parallel Backloggd autocomplete lookups during match. */
+  matchConcurrency: MATCH_CONCURRENCY,
   debugMode: false,
 };

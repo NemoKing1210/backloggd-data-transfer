@@ -1,9 +1,10 @@
 import { statusDisplayLabel } from '../format/analyze.js';
 import { platformByIdOrName } from '../format/platforms.js';
 import { entryDisplayTitle, primaryPlaythrough } from '../format/schema.js';
+import { backloggdUrl } from '../destinations/backloggd/site.js';
 import { fmt } from '../i18n/index.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
-import { t } from '../state.js';
+import { settings, t } from '../state.js';
 
 /**
  * @param {HTMLElement} root
@@ -668,4 +669,95 @@ function fmtProgress(current, total, title, activeTitles, concurrency) {
     .replace('{current}', String(current))
     .replace('{total}', String(total))
     .replace('{title}', title || activeTitles[0] || '…');
+}
+
+/**
+ * Debug-only collapsible list of games scraped into the library index.
+ * @param {HTMLElement} root
+ * @param {import('../destinations/backloggd/library.js').UserLibraryIndex | null | undefined} library
+ */
+export function renderLibraryDebug(root, library) {
+  const host = root.querySelector('[data-bdt-debug-library]');
+  if (!host) return;
+
+  if (!settings.debugMode || !library) {
+    host.hidden = true;
+    host.innerHTML = '';
+    return;
+  }
+
+  const games = Array.isArray(library.games) ? library.games : [];
+  const rows = games
+    .map((game) => {
+      const title = game.title || '—';
+      const slug = game.slug || '';
+      const id = game.gameId != null ? String(game.gameId) : '—';
+      const link = slug
+        ? `<a href="${escapeAttr(backloggdUrl(`/games/${encodeURIComponent(slug)}/`))}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`
+        : escapeHtml(title);
+      const sourcePath = String(game.sourceUrl || '').trim();
+      const sourceLabel = sourcePath || '—';
+      const sourceCell = sourcePath
+        ? `<a href="${escapeAttr(backloggdUrl(sourcePath))}" target="_blank" rel="noopener noreferrer" title="${escapeAttr(sourcePath)}">${escapeHtml(sourceLabel)}</a>`
+        : escapeHtml('—');
+      return `
+        <tr>
+          <td class="bdt-debug-library__title">${link}</td>
+          <td class="bdt-debug-library__id">${escapeHtml(id)}</td>
+          <td class="bdt-debug-library__slug">${escapeHtml(slug || '—')}</td>
+          <td class="bdt-debug-library__source">${sourceCell}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  host.hidden = false;
+  host.innerHTML = `
+    <details class="bdt-debug-library__details">
+      <summary class="bdt-debug-library__summary">
+        <span class="bdt-debug-library__summary-main">
+          <span class="bdt-debug-library__badge">DEBUG</span>
+          <strong class="bdt-debug-library__title-text">${escapeHtml(t.importDebugLibraryTitle)}</strong>
+          <span class="bdt-debug-library__count">${escapeHtml(
+            fmt(t.importDebugLibraryCount, {
+              count: games.length,
+              pages: library.pageCount || 0,
+              user: library.username || '—',
+            }),
+          )}</span>
+        </span>
+        <span class="bdt-debug-library__chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="bdt-debug-library__body">
+        <p class="bdt-debug-library__lead">${escapeHtml(t.importDebugLibraryLead)}</p>
+        ${
+          games.length
+            ? `<div class="bdt-debug-library__scroll">
+                <table class="bdt-debug-library__table">
+                  <thead>
+                    <tr>
+                      <th>${escapeHtml(t.importDebugLibraryColTitle)}</th>
+                      <th>${escapeHtml(t.importDebugLibraryColId)}</th>
+                      <th>${escapeHtml(t.importDebugLibraryColSlug)}</th>
+                      <th>${escapeHtml(t.importDebugLibraryColSource)}</th>
+                    </tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>`
+            : `<p class="bdt-muted">${escapeHtml(t.importDebugLibraryEmpty)}</p>`
+        }
+      </div>
+    </details>
+  `;
+}
+
+/**
+ * @param {HTMLElement} root
+ */
+export function clearLibraryDebug(root) {
+  const host = root.querySelector('[data-bdt-debug-library]');
+  if (!host) return;
+  host.hidden = true;
+  host.innerHTML = '';
 }

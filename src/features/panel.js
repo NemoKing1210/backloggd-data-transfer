@@ -1,4 +1,4 @@
-import { AUTHOR, REPO_URL, SCRIPT_VERSION, MATCH_CONCURRENCY, MATCH_DELAY_MS } from '../constants.js';
+import { AUTHOR, REPO_URL, SCRIPT_VERSION, MATCH_DELAY_MS } from '../constants.js';
 import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
 import {
   libraryHasGame,
@@ -30,7 +30,9 @@ import {
   setImportLogCurrent,
 } from './import-log-ui.js';
 import {
+  clearLibraryDebug,
   getSelectedMatchIndices,
+  renderLibraryDebug,
   renderMatchTable,
   setMatchProgress,
 } from './match-ui.js';
@@ -39,6 +41,7 @@ import { clearCsvMapping, readCsvMapping, readCsvValueMaps, renderCsvMapping } f
 import { renderHistoryPanel, syncHistoryTabBadge } from './history-ui.js';
 import { renderCachePanel, syncCacheTabBadge } from './cache-ui.js';
 import { renderCleanupPanel, syncCleanupTabBadge } from './cleanup-ui.js';
+import { renderSettingsPanel } from './settings-ui.js';
 import { showToast } from './toast.js';
 import {
   findBackloggdUserId,
@@ -157,6 +160,7 @@ function resetAnalysisUi(root) {
   }
   clearReadErrors(root);
   clearImportErrors(root);
+  clearLibraryDebug(root);
   const authGate = root.querySelector('[data-bdt-import-auth]');
   if (authGate) authGate.hidden = true;
   const matchTable = root.querySelector('[data-bdt-match-table]');
@@ -700,7 +704,7 @@ async function runMatchAndReview(root, doc) {
 
     const matchSummary = await matchTransferEntries(loadedDoc, {
       delayMs: MATCH_DELAY_MS,
-      concurrency: MATCH_CONCURRENCY,
+      concurrency: settings.matchConcurrency,
       library,
       shouldCancel: () => runId !== matchRunId,
       onProgress({ done, total: tot, entry, activeTitles, concurrency }) {
@@ -727,6 +731,7 @@ async function runMatchAndReview(root, doc) {
       duplicatesRemoved: deduped.removedCount,
     });
     renderSummary(root, analysis);
+    renderLibraryDebug(root, library);
     const readIssues = collectReadIssues(
       matchSummary.results,
       libraryError,
@@ -1172,6 +1177,7 @@ export function openPanel(tab = 'import') {
           ${escapeHtml(t.tabCache)}
           <span class="bdt-tab__badge" data-bdt-cache-badge>0%</span>
         </button>
+        <button type="button" class="bdt-tab" data-bdt-tab="settings" role="tab">${escapeHtml(t.tabSettings)}</button>
         <button type="button" class="bdt-tab" data-bdt-tab="about" role="tab">${escapeHtml(t.tabAbout)}</button>
       </nav>
       <div class="bdt-panel__body">
@@ -1295,6 +1301,7 @@ export function openPanel(tab = 'import') {
               <p class="bdt-stage__lead">${escapeHtml(t.importStepReviewLead)}</p>
               <div class="bdt-summary" data-bdt-summary hidden></div>
               <div class="bdt-errors" data-bdt-errors hidden></div>
+              <div class="bdt-debug-library" data-bdt-debug-library hidden></div>
               <div class="bdt-match-wrap" data-bdt-match-table hidden></div>
               <div class="bdt-stage__footer bdt-stage__footer--sticky">
                 <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-back-file>${escapeHtml(t.importBack)}</button>
@@ -1331,6 +1338,7 @@ export function openPanel(tab = 'import') {
         <section class="bdt-tab-panel" data-bdt-panel="cleanup" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="history" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="cache" hidden></section>
+        <section class="bdt-tab-panel" data-bdt-panel="settings" hidden></section>
         <section class="bdt-tab-panel" data-bdt-panel="about" hidden>
           <div class="bdt-about">
             <div class="bdt-about__hero">
@@ -1715,6 +1723,16 @@ function selectTab(backdrop, tab) {
   }
   if (tab === 'cache') {
     renderCachePanel(backdrop);
+  }
+  if (tab === 'settings') {
+    renderSettingsPanel(backdrop, {
+      onLocaleChange() {
+        openPanel('settings');
+      },
+      onSettingsChange() {
+        renderLibraryDebug(backdrop, lastLibrary);
+      },
+    });
   }
 }
 

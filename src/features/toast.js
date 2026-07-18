@@ -1,8 +1,16 @@
 import { escapeHtml } from '../utils/html.js';
+import { t } from '../state.js';
 
 const HOST_ID = 'bdt-toast-host';
-const DEFAULT_MS = 3800;
+const DEFAULT_MS = 4200;
 const MAX_VISIBLE = 4;
+
+const TYPE_ICONS = Object.freeze({
+  success: 'fa-solid fa-circle-check',
+  warning: 'fa-solid fa-triangle-exclamation',
+  error: 'fa-solid fa-circle-xmark',
+  info: 'fa-solid fa-circle-info',
+});
 
 function ensureHost() {
   let host = document.getElementById(HOST_ID);
@@ -25,9 +33,26 @@ function dismissToast(el) {
   setTimeout(done, 320);
 }
 
+function defaultTitle(type) {
+  switch (type) {
+    case 'success':
+      return t.toastTitleSuccess;
+    case 'warning':
+      return t.toastTitleWarning;
+    case 'error':
+      return t.toastTitleError;
+    default:
+      return t.toastTitleInfo;
+  }
+}
+
 /**
  * @param {string} message
- * @param {{ type?: 'info' | 'success' | 'warning' | 'error', duration?: number }} [options]
+ * @param {{
+ *   type?: 'info' | 'success' | 'warning' | 'error',
+ *   title?: string,
+ *   duration?: number,
+ * }} [options]
  */
 export function showToast(message, options = {}) {
   const text = String(message || '').trim();
@@ -36,10 +61,13 @@ export function showToast(message, options = {}) {
   const type = ['info', 'success', 'warning', 'error'].includes(options.type)
     ? options.type
     : 'info';
+  const title = String(options.title || defaultTitle(type)).trim() || defaultTitle(type);
   const duration =
     Number.isFinite(options.duration) && options.duration > 0
       ? options.duration
-      : DEFAULT_MS;
+      : type === 'error'
+        ? 5600
+        : DEFAULT_MS;
 
   const host = ensureHost();
   while (host.children.length >= MAX_VISIBLE) {
@@ -48,8 +76,22 @@ export function showToast(message, options = {}) {
 
   const el = document.createElement('div');
   el.className = `bdt-toast bdt-toast--${type}`;
-  el.setAttribute('role', 'status');
-  el.innerHTML = `<span class="bdt-toast__text">${escapeHtml(text)}</span>`;
+  el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  el.innerHTML = `
+    <span class="bdt-toast__icon" aria-hidden="true">
+      <i class="${TYPE_ICONS[type] || TYPE_ICONS.info}"></i>
+    </span>
+    <div class="bdt-toast__body">
+      <strong class="bdt-toast__title">${escapeHtml(title)}</strong>
+      <p class="bdt-toast__text">${escapeHtml(text)}</p>
+    </div>
+    <button type="button" class="bdt-toast__close" aria-label="${escapeHtml(t.close)}">×</button>
+  `;
+
+  el.querySelector('.bdt-toast__close')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dismissToast(el);
+  });
   el.addEventListener('click', () => dismissToast(el));
   host.appendChild(el);
 

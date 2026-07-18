@@ -5,6 +5,8 @@ export const SCRIPT_VERSION = pkg.version;
 export const SETTINGS_KEY = 'bdt_settings';
 export const ROOT_ATTR = 'data-bdt-root';
 export const SCAN_DEBOUNCE_MS = 400;
+/** Delay between Backloggd autocomplete lookups during Read/match. */
+export const MATCH_DELAY_MS = 350;
 
 /** Canonical transfer file identity. */
 export const TRANSFER_FORMAT_ID = 'backloggd-transfer';
@@ -62,5 +64,7 @@ export const DEFAULT_SETTINGS = {
   uiLocale: 'auto',
   importDelayMs: 800,
   importFormat: 'json',
+  /** When false, games already in the user's library stay unchecked by default. */
+  importExisting: false,
   debugMode: false,
 };

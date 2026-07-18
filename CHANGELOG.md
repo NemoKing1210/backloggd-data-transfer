@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Transfer format **v2**: entry shape mirrors Backloggd log POST (`game_id`, `log`, `playthroughs`, `dates`); dropped tags / flat v1 field names. Parser still migrates v1 files.
+- Read step matches titles via Backloggd `/autocomplete` (progress bar + results table; fills `game_id` / `slug`).
 
 ### Fixed
 

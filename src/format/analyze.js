@@ -15,16 +15,18 @@ import { entryDisplayTitle, primaryPlaythrough } from './schema.js';
  * @property {number} withDates
  * @property {number} withReview
  * @property {number} withGameId
+ * @property {number} foundCount
+ * @property {number} notFoundCount
+ * @property {number} existingCount
  * @property {Record<string, number>} byStatus
- * @property {number|null} newCount
- * @property {number|null} existingCount
  */
 
 /**
  * @param {import('./schema.js').TransferDocument} doc
+ * @param {{ foundCount?: number, notFoundCount?: number, existingCount?: number }} [matchStats]
  * @returns {TransferAnalysis}
  */
-export function analyzeTransferDocument(doc) {
+export function analyzeTransferDocument(doc, matchStats = {}) {
   const entries = doc?.entries || [];
   const titles = new Set();
   let withRating = 0;
@@ -58,6 +60,14 @@ export function analyzeTransferDocument(doc) {
 
   const total = entries.length;
   const uniqueTitles = titles.size;
+  const foundCount =
+    matchStats.foundCount != null ? matchStats.foundCount : withGameId;
+  const notFoundCount =
+    matchStats.notFoundCount != null
+      ? matchStats.notFoundCount
+      : Math.max(0, total - foundCount);
+  const existingCount =
+    matchStats.existingCount != null ? matchStats.existingCount : 0;
 
   return {
     version: Number(doc.version) || 0,
@@ -72,9 +82,10 @@ export function analyzeTransferDocument(doc) {
     withDates,
     withReview,
     withGameId,
+    foundCount,
+    notFoundCount,
+    existingCount,
     byStatus,
-    newCount: null,
-    existingCount: null,
   };
 }
 

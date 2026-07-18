@@ -1,5 +1,7 @@
-import { REPO_URL, SCRIPT_VERSION } from '../constants.js';
+import { REPO_URL, SCRIPT_VERSION, MATCH_DELAY_MS } from '../constants.js';
 import { importTransferToBackloggd } from '../destinations/backloggd/index.js';
+import { loadCurrentUserLibrary } from '../destinations/backloggd/library.js';
+import { matchTransferEntries } from '../destinations/backloggd/match.js';
 import { analyzeTransferDocument, statusDisplayLabel } from '../format/analyze.js';
 import { createExampleTransferDocument } from '../format/example.js';
 import { parseTransferDocument } from '../format/parse.js';
@@ -10,6 +12,12 @@ import { saveSettings } from '../settings.js';
 import { reloadRuntimeSettings, settings, t } from '../state.js';
 import { downloadBlob, readFileAsText } from '../utils/download.js';
 import { escapeAttr, escapeHtml } from '../utils/html.js';
+import {
+  getSelectedMatchIndices,
+  renderMatchTable,
+  setMatchProgress,
+} from './match-ui.js';
+import { clearReadErrors, collectReadIssues, renderReadErrors } from './errors-ui.js';
 import { showToast } from './toast.js';
 
 const PANEL_ID = 'bdt-panel-backdrop';
@@ -23,6 +31,8 @@ let pendingFile = null;
 let importFormat = 'json';
 /** @type {string | null} */
 let prevHtmlOverflow = null;
+/** Bumps to cancel an in-flight match run. */
+let matchRunId = 0;
 
 function lockPageScroll() {
   if (prevHtmlOverflow !== null) return;
@@ -84,10 +94,18 @@ export function ensureNavButton() {
 
 function resetAnalysisUi(root) {
   loadedDoc = null;
+  matchRunId += 1;
   const summary = root.querySelector('[data-bdt-summary]');
   if (summary) summary.hidden = true;
+  clearReadErrors(root);
   const importBtn = root.querySelector('[data-bdt-import]');
   if (importBtn) importBtn.hidden = true;
+  const matchTable = root.querySelector('[data-bdt-match-table]');
+  if (matchTable) {
+    matchTable.hidden = true;
+    matchTable.innerHTML = '';
+  }
+  setMatchProgress(root, { visible: false });
   const logEl = root.querySelector('[data-bdt-log]');
   if (logEl) {
     logEl.hidden = true;
@@ -129,7 +147,8 @@ function updateDropzoneUi(root) {
   const metaEl = root.querySelector('[data-bdt-drop-meta]');
 
   if (metaEl) {
-    metaEl.textContent = importFormat === 'csv' ? t.importDropCsv : t.importDropJson;
+    metaEl.textContent =
+      importFormat === 'csv' ? t.importDropAcceptCsv : t.importDropAcceptJson;
   }
 
   if (!zone || !empty || !filled) return;
@@ -176,11 +195,11 @@ function applySelectedFile(root, file) {
 
   const name = String(file.name || '').toLowerCase();
   if (importFormat === 'json' && !name.endsWith('.json')) {
-    showToast(t.importDropJson, { type: 'warning' });
+    showToast(t.importDropJson, { type: 'warning', title: t.toastFileTypeTitle });
     return;
   }
   if (importFormat === 'csv' && !name.endsWith('.csv')) {
-    showToast(t.importDropCsv, { type: 'warning' });
+    showToast(t.importDropCsv, { type: 'warning', title: t.toastFileTypeTitle });
     return;
   }
 
@@ -201,47 +220,96 @@ function renderSummary(root, analysis) {
   const sourceLabel = analysis.label
     ? `${analysis.platform} · ${analysis.label}`
     : analysis.platform;
+  const matchPct =
+    analysis.total > 0
+      ? Math.round((analysis.foundCount / analysis.total) * 100)
+      : 0;
 
-  const newText =
-    analysis.newCount == null ? t.importStatPending : String(analysis.newCount);
-  const existingText =
-    analysis.existingCount == null
-      ? t.importStatPending
-      : String(analysis.existingCount);
-
-  const statusLines = Object.entries(analysis.byStatus)
+  const statusChips = Object.entries(analysis.byStatus)
     .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => {
+      const label = statusDisplayLabel(key, t.importStatNoStatus);
+      return `<li class="bdt-summary__chip" data-status="${escapeAttr(key)}"><span class="bdt-summary__chip-label">${escapeHtml(label)}</span><strong class="bdt-summary__chip-value">${count}</strong></li>`;
+    })
+    .join('');
+
+  const detailItems = [
+    [t.importStatUnique, analysis.uniqueTitles],
+    [t.importStatDuplicates, analysis.duplicates],
+    [t.importStatExisting, analysis.existingCount],
+    [t.importStatRated, analysis.withRating],
+    [t.importStatFavorites, analysis.favorites],
+    [t.importStatDates, analysis.withDates],
+    [t.importStatReviews, analysis.withReview],
+    [t.importStatGameId, analysis.withGameId],
+  ]
     .map(
-      ([key, count]) =>
-        `<li><span>${escapeHtml(statusDisplayLabel(key, t.importStatNoStatus))}</span><strong>${count}</strong></li>`,
+      ([label, value]) =>
+        `<li class="bdt-summary__detail"><span>${escapeHtml(label)}</span><strong>${value}</strong></li>`,
     )
     .join('');
 
   summary.innerHTML = `
-    <h3 class="bdt-summary__title">${escapeHtml(t.importSummaryTitle)}</h3>
-    <dl class="bdt-summary__grid">
-      <div><dt>${escapeHtml(t.importStatVersion)}</dt><dd>${escapeHtml(String(analysis.version))}</dd></div>
-      <div><dt>${escapeHtml(t.importStatSource)}</dt><dd>${escapeHtml(sourceLabel)}</dd></div>
-      <div><dt>${escapeHtml(t.importStatExported)}</dt><dd>${escapeHtml(analysis.exportedAt || '—')}</dd></div>
-      <div><dt>${escapeHtml(t.importStatTotal)}</dt><dd>${analysis.total}</dd></div>
-      <div><dt>${escapeHtml(t.importStatUnique)}</dt><dd>${analysis.uniqueTitles}</dd></div>
-      <div><dt>${escapeHtml(t.importStatDuplicates)}</dt><dd>${analysis.duplicates}</dd></div>
-      <div><dt>${escapeHtml(t.importStatNew)}</dt><dd>${escapeHtml(newText)}</dd></div>
-      <div><dt>${escapeHtml(t.importStatExisting)}</dt><dd>${escapeHtml(existingText)}</dd></div>
-      <div><dt>${escapeHtml(t.importStatRated)}</dt><dd>${analysis.withRating}</dd></div>
-      <div><dt>${escapeHtml(t.importStatFavorites)}</dt><dd>${analysis.favorites}</dd></div>
-      <div><dt>${escapeHtml(t.importStatDates)}</dt><dd>${analysis.withDates}</dd></div>
-      <div><dt>${escapeHtml(t.importStatReviews)}</dt><dd>${analysis.withReview}</dd></div>
-      <div><dt>${escapeHtml(t.importStatGameId)}</dt><dd>${analysis.withGameId}</dd></div>
-    </dl>
-    <p class="bdt-summary__statuses-label">${escapeHtml(t.importStatByStatus)}</p>
-    <ul class="bdt-summary__statuses">${statusLines || `<li><span>—</span><strong>0</strong></li>`}</ul>
-    <p class="bdt-muted bdt-stub">${escapeHtml(t.importNewNote)}</p>
+    <div class="bdt-summary__head">
+      <h3 class="bdt-summary__title">${escapeHtml(t.importSummaryTitle)}</h3>
+      <ul class="bdt-summary__meta">
+        <li><span>${escapeHtml(t.importStatVersion)}</span><strong>v${escapeHtml(String(analysis.version))}</strong></li>
+        <li><span>${escapeHtml(t.importStatSource)}</span><strong>${escapeHtml(sourceLabel)}</strong></li>
+        <li><span>${escapeHtml(t.importStatExported)}</span><strong>${escapeHtml(analysis.exportedAt || '—')}</strong></li>
+      </ul>
+    </div>
+
+    <div class="bdt-summary__metrics" role="group" aria-label="${escapeAttr(t.importStatMatchGroup)}">
+      <div class="bdt-summary__metric">
+        <strong class="bdt-summary__metric-value">${analysis.total}</strong>
+        <span class="bdt-summary__metric-label">${escapeHtml(t.importStatTotal)}</span>
+      </div>
+      <div class="bdt-summary__metric bdt-summary__metric--ok">
+        <strong class="bdt-summary__metric-value">${analysis.foundCount}</strong>
+        <span class="bdt-summary__metric-label">${escapeHtml(t.importStatFound)}</span>
+      </div>
+      <div class="bdt-summary__metric bdt-summary__metric--warn">
+        <strong class="bdt-summary__metric-value">${analysis.notFoundCount}</strong>
+        <span class="bdt-summary__metric-label">${escapeHtml(t.importStatNotFound)}</span>
+      </div>
+      <div class="bdt-summary__metric bdt-summary__metric--pct">
+        <strong class="bdt-summary__metric-value">${matchPct}%</strong>
+        <span class="bdt-summary__metric-label">${escapeHtml(t.importStatMatchRate)}</span>
+      </div>
+    </div>
+
+    <div class="bdt-summary__section">
+      <p class="bdt-summary__section-title">${escapeHtml(t.importStatDetails)}</p>
+      <ul class="bdt-summary__details">${detailItems}</ul>
+    </div>
+
+    <div class="bdt-summary__section">
+      <p class="bdt-summary__section-title">${escapeHtml(t.importStatByStatus)}</p>
+      <ul class="bdt-summary__statuses">${statusChips || `<li class="bdt-summary__chip"><span class="bdt-summary__chip-label">—</span><strong class="bdt-summary__chip-value">0</strong></li>`}</ul>
+    </div>
   `;
   summary.hidden = false;
+}
 
+/**
+ * @param {HTMLElement} root
+ * @param {number} [selectedCount]
+ */
+function syncImportButton(root, selectedCount) {
   const importBtn = root.querySelector('[data-bdt-import]');
-  if (importBtn) importBtn.hidden = false;
+  if (!importBtn) return;
+
+  const matchTable = root.querySelector('[data-bdt-match-table]');
+  const hasTable = Boolean(matchTable && !matchTable.hidden);
+  importBtn.hidden = !loadedDoc || !hasTable;
+  if (importBtn.hidden) return;
+
+  const count =
+    selectedCount != null
+      ? selectedCount
+      : getSelectedMatchIndices(root).length;
+  importBtn.textContent = fmt(t.importStartSelected, { count });
+  importBtn.disabled = count === 0;
 }
 
 export function openPanel(tab = 'import') {
@@ -326,7 +394,10 @@ export function openPanel(tab = 'import') {
             <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-analyze disabled>${escapeHtml(t.importAnalyze)}</button>
             <button type="button" class="bdt-btn bdt-btn--ghost" data-bdt-example>${escapeHtml(t.importDownloadExample)}</button>
           </div>
+          <div class="bdt-progress" data-bdt-progress hidden></div>
           <div class="bdt-summary" data-bdt-summary hidden></div>
+          <div class="bdt-errors" data-bdt-errors hidden></div>
+          <div class="bdt-match-wrap" data-bdt-match-table hidden></div>
           <div class="bdt-actions" data-bdt-import-wrap>
             <button type="button" class="bdt-btn bdt-btn--primary" data-bdt-import hidden>${escapeHtml(t.importStart)}</button>
           </div>
@@ -399,45 +470,164 @@ export function openPanel(tab = 'import') {
   const analyzeBtn = backdrop.querySelector('[data-bdt-analyze]');
   analyzeBtn?.addEventListener('click', async () => {
     if (importFormat === 'csv') {
-      showToast(t.importCsvStub, { type: 'warning' });
+      showToast(t.importCsvStub, { type: 'warning', title: t.toastCsvSoonTitle });
       return;
     }
     if (!pendingFile) {
-      showToast(t.importNeedFile, { type: 'warning' });
+      showToast(t.importNeedFile, { type: 'warning', title: t.importNeedFileTitle });
       return;
     }
     analyzeBtn.disabled = true;
+    const runId = ++matchRunId;
     try {
       const text = await readFileAsText(pendingFile);
       const parsed = parseTransferDocument(text);
       if (!parsed.ok) {
         resetAnalysisUi(backdrop);
-        showToast(fmt(t.importInvalid, { error: parsed.error }), { type: 'error' });
+        showToast(fmt(t.importInvalid, { error: parsed.error }), {
+          type: 'error',
+          title: t.importInvalidTitle,
+        });
         return;
       }
       loadedDoc = parsed.value;
-      const analysis = analyzeTransferDocument(loadedDoc);
+      const total = loadedDoc.entries.length;
+
+      setMatchProgress(backdrop, {
+        visible: true,
+        current: 0,
+        total: 1,
+        label: t.importLibraryProgress,
+      });
+
+      let library = null;
+      /** @type {string | null} */
+      let libraryError = null;
+      try {
+        library = await loadCurrentUserLibrary({
+          shouldCancel: () => runId !== matchRunId,
+          onProgress({ listIndex, listTotal, page }) {
+            if (runId !== matchRunId) return;
+            setMatchProgress(backdrop, {
+              visible: true,
+              current: listIndex + 1,
+              total: listTotal,
+              label: fmt(t.importLibraryProgressDetail, {
+                list: listIndex + 1,
+                total: listTotal,
+                page,
+              }),
+            });
+          },
+        });
+      } catch (err) {
+        if (runId !== matchRunId) return;
+        libraryError = err instanceof Error ? err.message : String(err);
+        showToast(fmt(t.importLibraryFailed, { error: libraryError }), {
+          type: 'warning',
+          title: t.importLibraryFailedTitle,
+        });
+      }
+
+      if (runId !== matchRunId) return;
+
+      setMatchProgress(backdrop, {
+        visible: true,
+        current: 0,
+        total: Math.max(total, 1),
+        title: '',
+        reset: true,
+      });
+
+      const matchSummary = await matchTransferEntries(loadedDoc, {
+        delayMs: MATCH_DELAY_MS,
+        library,
+        shouldCancel: () => runId !== matchRunId,
+        onProgress({ index, total: tot, entry }) {
+          if (runId !== matchRunId) return;
+          setMatchProgress(backdrop, {
+            visible: true,
+            current: index + 1,
+            total: tot,
+            title: entryDisplayTitle(entry),
+          });
+        },
+      });
+
+      if (runId !== matchRunId) return;
+
+      setMatchProgress(backdrop, { visible: false });
+      const analysis = analyzeTransferDocument(loadedDoc, {
+        foundCount: matchSummary.foundCount,
+        notFoundCount: matchSummary.notFoundCount + matchSummary.errorCount,
+        existingCount: matchSummary.existingCount,
+      });
       renderSummary(backdrop, analysis);
+      renderReadErrors(
+        backdrop,
+        collectReadIssues(matchSummary.results, libraryError),
+      );
+      renderMatchTable(backdrop, matchSummary.results, {
+        importExisting: settings.importExisting === true,
+        onSelectionChange(selected) {
+          syncImportButton(backdrop, selected);
+        },
+        onImportExistingChange(enabled) {
+          saveSettings({ ...settings, importExisting: enabled });
+          reloadRuntimeSettings();
+        },
+      });
+      syncImportButton(backdrop);
       showToast(
         fmt(t.importAnalyzed, {
           count: analysis.total,
-          platform: analysis.platform,
+          found: analysis.foundCount,
+          missing: analysis.notFoundCount,
         }),
-        { type: 'success' },
+        {
+          type: analysis.notFoundCount ? 'warning' : 'success',
+          title: t.importAnalyzedTitle,
+        },
       );
     } catch (err) {
-      resetAnalysisUi(backdrop);
-      showToast(err instanceof Error ? err.message : String(err), { type: 'error' });
+      if (runId === matchRunId) {
+        resetAnalysisUi(backdrop);
+        showToast(err instanceof Error ? err.message : String(err), {
+          type: 'error',
+          title: t.importReadFailedTitle,
+        });
+      }
     } finally {
-      syncActionButtons(backdrop);
+      if (runId === matchRunId) {
+        setMatchProgress(backdrop, { visible: false });
+        syncActionButtons(backdrop);
+      }
     }
   });
 
   backdrop.querySelector('[data-bdt-import]')?.addEventListener('click', async () => {
     if (!loadedDoc) {
-      showToast(t.importNeedAnalyze, { type: 'warning' });
+      showToast(t.importNeedAnalyze, {
+        type: 'warning',
+        title: t.importNeedAnalyzeTitle,
+      });
       return;
     }
+
+    const selectedIndices = new Set(getSelectedMatchIndices(backdrop));
+    if (!selectedIndices.size) {
+      showToast(t.importNeedSelection, {
+        type: 'warning',
+        title: t.importNeedSelectionTitle,
+      });
+      return;
+    }
+
+    const importDoc = {
+      ...loadedDoc,
+      entries: loadedDoc.entries.filter((_, index) => selectedIndices.has(index)),
+    };
+
     const importBtn = backdrop.querySelector('[data-bdt-import]');
     if (importBtn) importBtn.disabled = true;
     const logEl = backdrop.querySelector('[data-bdt-log]');
@@ -447,7 +637,7 @@ export function openPanel(tab = 'import') {
     }
 
     try {
-      const summary = await importTransferToBackloggd(loadedDoc, {
+      const summary = await importTransferToBackloggd(importDoc, {
         dryRun: false,
         delayMs: settings.importDelayMs,
         onProgress({ index, total, entry, result }) {
@@ -466,10 +656,13 @@ export function openPanel(tab = 'import') {
           ok: summary.okCount,
           fail: summary.failCount,
         }),
-        { type: summary.failCount ? 'warning' : 'success' },
+        {
+          type: summary.failCount ? 'warning' : 'success',
+          title: t.importDoneTitle,
+        },
       );
     } finally {
-      if (importBtn) importBtn.disabled = false;
+      syncImportButton(backdrop);
     }
   });
 
@@ -477,7 +670,10 @@ export function openPanel(tab = 'import') {
     const doc = createExampleTransferDocument();
     const filename = transferFilename('example');
     downloadBlob(filename, serializeTransferDocument(doc));
-    showToast(fmt(t.importExampleDownloaded, { filename }), { type: 'success' });
+    showToast(fmt(t.importExampleDownloaded, { filename }), {
+      type: 'success',
+      title: t.importExampleTitle,
+    });
   });
 
   // Apply initial format UI without clearing twice
@@ -506,4 +702,5 @@ export function closePanel() {
   unlockPageScroll();
   pendingFile = null;
   loadedDoc = null;
+  matchRunId += 1;
 }
